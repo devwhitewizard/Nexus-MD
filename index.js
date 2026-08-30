@@ -1,9 +1,9 @@
 const path = require("path");
-const envResult = require("dotenv").config({ path: path.join(__dirname, ".env") });
+const envResult = require("dotenv").config({ path: path.join(__dirname, "config.env") });
 if (envResult.error) {
-    console.log("⚠️  Could not find .env file. Using system environment variables instead.");
+    console.log("⚠️  Could not find config.env file. Using system environment variables instead.");
 } else {
-    console.log("✅ .env file loaded successfully.");
+    console.log("✅ config.env file loaded successfully.");
 }
 
 // ── Log Noise Filter ─────────────────────────────────────────────────────────

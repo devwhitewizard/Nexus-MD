@@ -58,7 +58,9 @@ Nexus-1MD features a comprehensive suite of commands grouped into clear categori
 
 ## 🛠️ Configuration Checklist
 
-To configure Nexus-1MD, duplicate the `.env.example` file, rename it to `.env`, and customize the variables.
+To configure Nexus-1MD, duplicate the `.env.example` file, rename it to `config.env`, and customize the variables.
+
+> ℹ️ **Note for upgrading users:** The configuration file is now named `config.env` (previously `.env`).
 
 | Variable | Description | Mandatory | Default |
 | :--- | :--- | :--- | :--- |
@@ -129,9 +131,9 @@ Ensure you have [Node.js](https://nodejs.org/) v18+ installed on your system.
    ```
 
 3. **Configure Environment Variables**
-   Copy `.env.example` to `.env` and fill in the required variables (specifically `SUDO`):
+   Copy `.env.example` to `config.env` and fill in the required variables (specifically `SUDO`):
    ```bash
-   cp .env.example .env
+   cp .env.example config.env
    ```
 
 4. **Run the Bot**

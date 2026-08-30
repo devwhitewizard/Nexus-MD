@@ -13,5 +13,10 @@
     "*.db-shm",
     "*.db-wal",
     "*.log"
-  ]
+  ],
+  "watch": [
+    ".",
+    "config.env"
+  ],
+  "ext": "js,json,env"
 }
