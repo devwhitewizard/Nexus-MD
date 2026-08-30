@@ -133,7 +133,13 @@ async function connectionLogic() {
         } else {
             console.log("📦 SESSION_ID detected in environment variables. Verifying & restoring credentials...");
             try {
-                const buffer = Buffer.from(sessionId, "base64");
+                // Support URL-safe base64 (- and _) and fix missing padding =
+                let safeBase64 = sessionId.replace(/-/g, "+").replace(/_/g, "/");
+                while (safeBase64.length % 4 !== 0) {
+                    safeBase64 += "=";
+                }
+
+                const buffer = Buffer.from(safeBase64, "base64");
 
                 let credsJson = "";
                 const decodeBuffer = (buf) => {
@@ -348,14 +354,18 @@ async function connectionLogic() {
             global.latestQr = qr;
         }
 
+        const appUrl = process.env.HEROKU_APP_NAME 
+            ? `https://${process.env.HEROKU_APP_NAME}.herokuapp.com/qr` 
+            : (process.env.APP_URL ? `${process.env.APP_URL.replace(/\/$/, "")}/qr` : `http://localhost:${PORT}/qr`);
+
         if (qr && (!process.env.SESSION_ID || process.env.SESSION_ID_FAILED) && !usePairingCode) {
             console.clear();
             console.log("💡 QR Code too big, distorted, or hard to scan?");
-            console.log(`👉 Open http://localhost:${PORT}/qr in your web browser for a clean, high-res QR code!\n`);
+            console.log(`👉 Open ${appUrl} in your web browser for a clean, high-res QR code!\n`);
             console.log("📲 Scan this QR to login:\n");
             qrcode.generate(qr, { small: true });
             console.log("\n💡 QR Code too big, distorted, or hard to scan?");
-            console.log(`👉 Open http://localhost:${PORT}/qr in your web browser for a clean, high-res QR code!\n`);
+            console.log(`👉 Open ${appUrl} in your web browser for a clean, high-res QR code!\n`);
         }
 
         if (connection === "open") {
