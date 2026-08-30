@@ -315,15 +315,15 @@ async function connectionLogic() {
         return await originalSendMessage(jid, msgPayload, options);
     };
 
-    // ⌚ WATCHDOG: If SESSION_ID is present but fails to connect within 30s, enable QR or Pairing fallback.
+    // ⌚ WATCHDOG: If SESSION_ID is present but fails to connect within 30s, enable QR fallback (or Pairing fallback if PAIRING_NUMBER is provided).
     let connectionTimeout = null;
     if (process.env.SESSION_ID) {
         connectionTimeout = setTimeout(async () => {
             if (!sock.user) {
-                console.log("⚠️  Session ID failed to connect within 30s. Enabling fallback mode...");
+                console.log("⚠️  Session ID failed to connect within 30s. Enabling QR fallback...");
                 process.env.SESSION_ID_FAILED = "true";
 
-                if (process.env.PAIRING_NUMBER) {
+                if (process.env.PAIRING_NUMBER && process.env.PAIRING_NUMBER.trim() !== "") {
                     try {
                         let pNumber = process.env.PAIRING_NUMBER.replace(/[^0-9]/g, "");
                         console.log(`📡 Requesting fresh pairing code for ${pNumber}...`);
@@ -332,9 +332,6 @@ async function connectionLogic() {
                         console.log("🔗 YOUR NEXUS-MD PAIRING CODE:");
                         console.log(`👉 ${code} 👈`);
                         console.log("========================================\n");
-                        console.log("1. Open WhatsApp on your phone.");
-                        console.log("2. Go to Linked Devices > Link with Phone Number.");
-                        console.log(`3. Enter the code shown above.\n`);
                     } catch (err) {
                         console.error("❌ Failed to generate fallback pairing code:", err.message);
                     }
