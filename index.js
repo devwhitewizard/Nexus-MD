@@ -111,22 +111,28 @@ async function connectionLogic() {
     const fs = require("fs");
     const path = require("path");
 
-    // 📦 SESSION ID AUTO-RESTORE
+    // 📦 SESSION ID AUTO-RESTORE & DUMMY CHECK
     if (process.env.SESSION_ID) {
-        console.log("📦 SESSION_ID detected in environment variables. Verifying...");
-        const credsPath = path.join(__dirname, authFolder, "creds.json");
-        const sessionExists = fs.existsSync(credsPath) && fs.statSync(credsPath).size > 10;
+        let rawId = process.env.SESSION_ID.trim().replace(/^["']|["']$/g, "").trim();
+        if (rawId.includes("SESSION_ID=")) {
+            rawId = rawId.split("SESSION_ID=")[1].trim();
+        }
+        
+        let sessionId = rawId;
+        if (rawId.includes("~")) {
+            sessionId = rawId.split("~").slice(1).join("~");
+        } else if (/^nexus[-_~]?/i.test(rawId)) {
+            sessionId = rawId.replace(/^nexus[-_~]?/i, "");
+        }
+        sessionId = sessionId.replace(/\s+/g, "");
 
-        if (!sessionExists) {
-            console.log("📦 Restoring credentials from SESSION_ID...");
+        const DUMMY_VALUES = ["none", "null", "undefined", "session_id_here", "your_session_id", "nexus~", "false", "0", "optional", "empty"];
+        if (!sessionId || sessionId.length < 20 || DUMMY_VALUES.includes(sessionId.toLowerCase())) {
+            console.log("ℹ️ Placeholder or invalid SESSION_ID detected. Ignoring SESSION_ID to allow QR/Pairing mode.");
+            delete process.env.SESSION_ID;
+        } else {
+            console.log("📦 SESSION_ID detected in environment variables. Verifying & restoring credentials...");
             try {
-                // Strip surrounding quotes, whitespace, and newlines
-                const rawId = process.env.SESSION_ID.trim().replace(/^["']|["']$/g, "").trim();
-                const sessionId = (rawId.includes("~") 
-                    ? rawId.split("~").slice(1).join("~") 
-                    : (rawId.startsWith("Nexus") ? rawId.slice(5) : rawId)
-                ).replace(/\s+/g, "");
-
                 const buffer = Buffer.from(sessionId, "base64");
 
                 let credsJson = "";
@@ -139,13 +145,11 @@ async function connectionLogic() {
                 };
 
                 credsJson = decodeBuffer(buffer);
-                // Check for double base64
                 if (!credsJson.includes("{") && /^[a-zA-Z0-9+/=]+$/.test(credsJson.trim())) {
                     const nestedBuffer = Buffer.from(credsJson.trim(), "base64");
                     credsJson = decodeBuffer(nestedBuffer);
                 }
 
-                // Smart Binary Search & Validation
                 const extractValidJsonFromBuffer = (buf) => {
                     const text = buf.toString("utf-8");
                     const firstBrace = text.indexOf("{");
@@ -168,30 +172,27 @@ async function connectionLogic() {
                 const finalJson = extractValidJsonFromBuffer(Buffer.from(credsJson)) || extractValidJsonFromBuffer(buffer);
 
                 if (finalJson) {
-                    console.log(`✅ Session JSON recovered (Size: ${finalJson.length} bytes)`);
-                    try {
-                        let parsed = JSON.parse(finalJson);
-                        let creds = parsed.creds || (parsed.noiseKey ? parsed : null);
+                    let parsed = JSON.parse(finalJson);
+                    let creds = parsed.creds || (parsed.noiseKey ? parsed : null);
 
-                        if (creds) {
-                            creds.registered = true;
-                            const finalPath = path.join(__dirname, authFolder, "creds.json");
-                            if (!fs.existsSync(path.dirname(finalPath))) fs.mkdirSync(path.dirname(finalPath), { recursive: true });
-                            fs.writeFileSync(finalPath, JSON.stringify(creds));
-                            console.log(`✅ Credentials written successfully to: ${finalPath}`);
-                        }
-                    } catch (e) {
-                        console.error("❌ Session JSON parse failed:", e.message);
+                    if (creds) {
+                        creds.registered = true;
+                        const finalPath = path.join(__dirname, authFolder, "creds.json");
+                        if (!fs.existsSync(path.dirname(finalPath))) fs.mkdirSync(path.dirname(finalPath), { recursive: true });
+                        fs.writeFileSync(finalPath, JSON.stringify(creds));
+                        console.log(`✅ Session credentials successfully synced to: ${finalPath}`);
+                    } else {
+                        console.error("❌ Invalid creds object structure in SESSION_ID.");
+                        delete process.env.SESSION_ID;
                     }
                 } else {
                     console.error("❌ Error: Could not extract valid credentials JSON from SESSION_ID. The SESSION_ID may be corrupted or truncated.");
+                    delete process.env.SESSION_ID;
                 }
-                console.log("✅ Session restoration flow complete.");
             } catch (e) {
                 console.error("❌ Failed to restore session from SESSION_ID:", e.message);
+                delete process.env.SESSION_ID;
             }
-        } else {
-            console.log("📦 Local creds.json already exists and is valid. Skipping SESSION_ID restoration.");
         }
     }
 
