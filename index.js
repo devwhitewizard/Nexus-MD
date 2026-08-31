@@ -1,9 +1,27 @@
 const path = require("path");
-const envResult = require("dotenv").config({ path: path.join(__dirname, "config.env") });
-if (envResult.error) {
-    console.log("⚠️  Could not find config.env file. Using system environment variables instead.");
-} else {
-    console.log("✅ config.env file loaded successfully.");
+const fs = require("fs");
+
+// Multi-path Environment Loader (supports process.cwd() and __dirname for config.env / .env)
+const envCandidates = [
+    path.resolve(process.cwd(), "config.env"),
+    path.resolve(process.cwd(), ".env"),
+    path.resolve(__dirname, "config.env"),
+    path.resolve(__dirname, ".env")
+];
+
+let loadedEnv = false;
+for (const envPath of envCandidates) {
+    if (fs.existsSync(envPath)) {
+        const result = require("dotenv").config({ path: envPath });
+        if (!result.error) {
+            console.log(`✅ Environment file loaded successfully from: ${path.basename(envPath)}`);
+            loadedEnv = true;
+            break;
+        }
+    }
+}
+if (!loadedEnv) {
+    console.log("⚠️ Could not find config.env or .env file. Using system environment variables instead.");
 }
 
 // ── Log Noise Filter ─────────────────────────────────────────────────────────
@@ -113,8 +131,37 @@ async function connectionLogic() {
     const path = require("path");
 
     // 📦 SESSION ID AUTO-RESTORE & DUMMY CHECK
-    if (process.env.SESSION_ID) {
-        let rawId = process.env.SESSION_ID.trim().replace(/^["']|["']$/g, "").trim();
+    // Check for session.id file fallback in project root or session folder (for panels that truncate env vars)
+    const sessionIdFileCandidates = [
+        path.resolve(process.cwd(), "session.id"),
+        path.resolve(authFolder, "session.id")
+    ];
+    if (!process.env.SESSION_ID) {
+        for (const sFile of sessionIdFileCandidates) {
+            if (fs.existsSync(sFile)) {
+                try {
+                    const content = fs.readFileSync(sFile, "utf-8").trim();
+                    if (content && content.length > 20) {
+                        console.log(`📄 Found session.id file at: ${path.basename(sFile)}. Loading SESSION_ID from file...`);
+                        process.env.SESSION_ID = content;
+                        break;
+                    }
+                } catch (e) { }
+            }
+        }
+    }
+
+    const rawSessionVal = process.env.SESSION_ID || global.session;
+
+    if (rawSessionVal) {
+        let rawInput = String(rawSessionVal).trim();
+
+        // Handle URL encoding if present (%3D, %7E, %2B)
+        if (rawInput.includes("%3D") || rawInput.includes("%7E") || rawInput.includes("%2B")) {
+            try { rawInput = decodeURIComponent(rawInput); } catch (e) { }
+        }
+
+        let rawId = rawInput.replace(/^["']|["']$/g, "").trim();
         if (rawId.includes("SESSION_ID=")) {
             rawId = rawId.split("SESSION_ID=")[1].trim();
         }
@@ -132,51 +179,63 @@ async function connectionLogic() {
             console.log("ℹ️ Placeholder or invalid SESSION_ID detected. Ignoring SESSION_ID to allow QR/Pairing mode.");
             delete process.env.SESSION_ID;
         } else {
-            console.log("📦 SESSION_ID detected in environment variables. Verifying & restoring credentials...");
+            console.log(`📦 SESSION_ID detected (Length: ${sessionId.length} chars). Verifying & restoring credentials...`);
             try {
-                // Support URL-safe base64 (- and _) and fix missing padding =
-                let safeBase64 = sessionId.replace(/-/g, "+").replace(/_/g, "/");
-                while (safeBase64.length % 4 !== 0) {
-                    safeBase64 += "=";
+                let finalJson = null;
+
+                // 1. Direct JSON Check (if rawId is unencoded JSON object string)
+                if (rawId.trim().startsWith("{") && rawId.trim().endsWith("}")) {
+                    try {
+                        JSON.parse(rawId.trim());
+                        finalJson = rawId.trim();
+                    } catch (e) { }
                 }
 
-                const buffer = Buffer.from(safeBase64, "base64");
-
-                let credsJson = "";
-                const decodeBuffer = (buf) => {
-                    try { return zlib.gunzipSync(buf).toString("utf-8"); } catch {
-                        try { return zlib.inflateSync(buf).toString("utf-8"); } catch {
-                            return buf.toString("utf-8");
-                        }
+                // 2. Base64 & Decompression Check
+                if (!finalJson) {
+                    let safeBase64 = sessionId.replace(/-/g, "+").replace(/_/g, "/");
+                    while (safeBase64.length % 4 !== 0) {
+                        safeBase64 += "=";
                     }
-                };
 
-                credsJson = decodeBuffer(buffer);
-                if (!credsJson.includes("{") && /^[a-zA-Z0-9+/=]+$/.test(credsJson.trim())) {
-                    const nestedBuffer = Buffer.from(credsJson.trim(), "base64");
-                    credsJson = decodeBuffer(nestedBuffer);
+                    const buffer = Buffer.from(safeBase64, "base64");
+
+                    let credsJson = "";
+                    const decodeBuffer = (buf) => {
+                        try { return zlib.gunzipSync(buf).toString("utf-8"); } catch {
+                            try { return zlib.inflateSync(buf).toString("utf-8"); } catch {
+                                return buf.toString("utf-8");
+                            }
+                        }
+                    };
+
+                    credsJson = decodeBuffer(buffer);
+                    if (!credsJson.includes("{") && /^[a-zA-Z0-9+/=]+$/.test(credsJson.trim())) {
+                        const nestedBuffer = Buffer.from(credsJson.trim(), "base64");
+                        credsJson = decodeBuffer(nestedBuffer);
+                    }
+
+                    const extractValidJsonFromBuffer = (buf) => {
+                        const text = buf.toString("utf-8");
+                        const firstBrace = text.indexOf("{");
+                        if (firstBrace === -1) return null;
+
+                        for (let i = 0; i < text.length; i++) {
+                            if (text[i] === "{") {
+                                try {
+                                    const candidate = text.substring(i, text.lastIndexOf("}") + 1);
+                                    if (candidate.includes("noiseKey") || candidate.includes("creds")) {
+                                        JSON.parse(candidate);
+                                        return candidate;
+                                    }
+                                } catch (e) { }
+                            }
+                        }
+                        return null;
+                    };
+
+                    finalJson = extractValidJsonFromBuffer(Buffer.from(credsJson)) || extractValidJsonFromBuffer(buffer);
                 }
-
-                const extractValidJsonFromBuffer = (buf) => {
-                    const text = buf.toString("utf-8");
-                    const firstBrace = text.indexOf("{");
-                    if (firstBrace === -1) return null;
-
-                    for (let i = 0; i < text.length; i++) {
-                        if (text[i] === "{") {
-                            try {
-                                const candidate = text.substring(i, text.lastIndexOf("}") + 1);
-                                if (candidate.includes("noiseKey") || candidate.includes("creds")) {
-                                    JSON.parse(candidate);
-                                    return candidate;
-                                }
-                            } catch (e) { }
-                        }
-                    }
-                    return null;
-                };
-
-                const finalJson = extractValidJsonFromBuffer(Buffer.from(credsJson)) || extractValidJsonFromBuffer(buffer);
 
                 if (finalJson) {
                     let parsed = JSON.parse(finalJson);
@@ -194,6 +253,9 @@ async function connectionLogic() {
                     }
                 } else {
                     console.error("❌ Error: Could not extract valid credentials JSON from SESSION_ID. The SESSION_ID may be corrupted or truncated.");
+                    if (sessionId.length < 500) {
+                        console.error(`💡 PANEL DIAGNOSTIC: The detected SESSION_ID string is only ${sessionId.length} characters long. Hosting panels sometimes truncate long variables. You can also save your full session string into a file named 'session.id' in your bot root directory.`);
+                    }
                     delete process.env.SESSION_ID;
                 }
             } catch (e) {
