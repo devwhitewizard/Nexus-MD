@@ -229,9 +229,15 @@ async function connectionLogic() {
         }
     }
 
-    const usePairingCode = !!process.env.PAIRING_NUMBER && !state.creds.registered;
-    if (!state.creds.registered && !process.env.PAIRING_NUMBER && !process.env.SESSION_ID) {
-        console.log("ℹ️  No PAIRING_NUMBER or SESSION_ID found. Defaulting to QR code login.");
+    const { ownerNumbers } = require("./config");
+    const rawPairingNum = process.env.PAIRING_NUMBER || process.env.SUDO || process.env.OWNERS || (ownerNumbers && ownerNumbers[0]);
+    const pairingNumber = rawPairingNum ? String(rawPairingNum).split(",")[0].replace(/[^0-9]/g, "") : "";
+    const usePairingCode = !!pairingNumber && !state.creds.registered;
+
+    if (!state.creds.registered && !pairingNumber && !process.env.SESSION_ID) {
+        console.log("ℹ️  No PAIRING_NUMBER, SUDO, or SESSION_ID found. Defaulting to QR code login.");
+    } else if (!state.creds.registered && pairingNumber && !process.env.SESSION_ID) {
+        console.log(`ℹ️  Pairing code login enabled for fallback number: ${pairingNumber}`);
     }
 
     const NodeCache = require("node-cache");
@@ -321,14 +327,13 @@ async function connectionLogic() {
     if (process.env.SESSION_ID) {
         connectionTimeout = setTimeout(async () => {
             if (!sock.user && !global.isSockConnected) {
-                console.log("⚠️  Session ID failed to connect within 60s. Enabling QR fallback...");
+                console.log("⚠️  Session ID failed to connect within 60s. Enabling fallback...");
                 process.env.SESSION_ID_FAILED = "true";
 
-                if (process.env.PAIRING_NUMBER && process.env.PAIRING_NUMBER.trim() !== "") {
+                if (pairingNumber) {
                     try {
-                        let pNumber = process.env.PAIRING_NUMBER.replace(/[^0-9]/g, "");
-                        console.log(`📡 Requesting fresh pairing code for ${pNumber}...`);
-                        const code = await sock.requestPairingCode(pNumber);
+                        console.log(`📡 Requesting fresh fallback pairing code for ${pairingNumber}...`);
+                        const code = await sock.requestPairingCode(pairingNumber);
                         console.log("\n========================================");
                         console.log("🔗 YOUR NEXUS-MD PAIRING CODE:");
                         console.log(`👉 ${code} 👈`);
@@ -344,18 +349,17 @@ async function connectionLogic() {
     if (usePairingCode && !state.creds.registered && !process.env.SESSION_ID) {
         setTimeout(async () => {
             try {
-                let pNumber = process.env.PAIRING_NUMBER.replace(/[^0-9]/g, "");
-                const code = await sock.requestPairingCode(pNumber);
-                console.clear();
+                console.log(`📡 Requesting pairing code for ${pairingNumber}...`);
+                const code = await sock.requestPairingCode(pairingNumber);
                 console.log("\n========================================");
                 console.log("🔗 YOUR NEXUS-MD PAIRING CODE:");
                 console.log(`👉 ${code} 👈`);
                 console.log("========================================\n");
                 console.log("1. Open WhatsApp on your phone.");
                 console.log("2. Go to Linked Devices > Link with Phone Number.");
-                console.log(`3. Enter the code shown above.`);
+                console.log(`3. Enter the code shown above.\n`);
             } catch (err) {
-                console.error("❌ Failed to generate pairing code:", err);
+                console.error("❌ Failed to generate pairing code:", err.message || err);
             }
         }, 6000);
     }
