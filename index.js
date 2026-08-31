@@ -440,9 +440,6 @@ async function connectionLogic() {
             : (process.env.APP_URL ? `${process.env.APP_URL.replace(/\/$/, "")}/qr` : `http://localhost:${PORT}/qr`);
 
         if (qr && (!process.env.SESSION_ID || process.env.SESSION_ID_FAILED) && !usePairingCode) {
-            console.clear();
-            console.log("💡 QR Code too big, distorted, or hard to scan?");
-            console.log(`👉 Open ${appUrl} in your web browser for a clean, high-res QR code!\n`);
             console.log("📲 Scan this QR to login:\n");
             qrcode.generate(qr, { small: true });
             console.log("\n💡 QR Code too big, distorted, or hard to scan?");
