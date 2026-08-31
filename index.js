@@ -72,7 +72,8 @@ const makeWASocket = require("@whiskeysockets/baileys").default;
 const qrcode = require("qrcode-terminal");
 const zlib = require("zlib");
 
-const { authFolder } = require("./config");
+const { authFolder: rawAuthFolder } = require("./config");
+const authFolder = path.resolve(process.cwd(), rawAuthFolder || "session");
 const { handleMessages } = require("./lib/commandHandler");
 const { getMessage } = require("./nexus/messageModel");
 const { getSettings } = require("./lib/settings");
@@ -183,7 +184,7 @@ async function connectionLogic() {
 
                     if (creds) {
                         creds.registered = true;
-                        const finalPath = path.join(__dirname, authFolder, "creds.json");
+                        const finalPath = path.join(authFolder, "creds.json");
                         if (!fs.existsSync(path.dirname(finalPath))) fs.mkdirSync(path.dirname(finalPath), { recursive: true });
                         fs.writeFileSync(finalPath, JSON.stringify(creds));
                         console.log(`✅ Session credentials successfully synced to: ${finalPath}`);
@@ -211,7 +212,7 @@ async function connectionLogic() {
         try {
             const fs = require("fs");
             const path = require("path");
-            const sessionDir = path.join(__dirname, authFolder);
+            const sessionDir = authFolder;
             if (fs.existsSync(sessionDir)) {
                 fs.readdirSync(sessionDir).forEach(file => {
                     try {
@@ -465,7 +466,7 @@ async function connectionLogic() {
                 const { authFolder, version } = require("./config");
 
                 // Generate Session ID (sent to owner DM only — not printed to logs)
-                const credsPath = path.join(__dirname, authFolder, "creds.json");
+                const credsPath = path.join(authFolder, "creds.json");
                 let sessionId = "NO_CREDS_FOUND";
                 if (fs.existsSync(credsPath)) {
                     const creds = fs.readFileSync(credsPath, "utf-8");
@@ -612,10 +613,10 @@ async function connectionLogic() {
                 const fs = require("fs");
                 const path = require("path");
                 const { authFolder } = require("./config");
-                const credsPath = path.join(__dirname, authFolder, "creds.json");
+                const credsPath = path.join(authFolder, "creds.json");
                 try {
                     if (fs.existsSync(credsPath)) fs.unlinkSync(credsPath);
-                    const sessionDir = path.join(__dirname, authFolder);
+                    const sessionDir = authFolder;
                     if (fs.existsSync(sessionDir)) {
                         fs.readdirSync(sessionDir).forEach(file => {
                             try { fs.unlinkSync(path.join(sessionDir, file)); } catch (e) { }
