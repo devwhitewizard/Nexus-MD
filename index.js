@@ -316,12 +316,12 @@ async function connectionLogic() {
         return await originalSendMessage(jid, msgPayload, options);
     };
 
-    // ⌚ WATCHDOG: If SESSION_ID is present but fails to connect within 30s, enable QR fallback (or Pairing fallback if PAIRING_NUMBER is provided).
+    // ⌚ WATCHDOG: If SESSION_ID is present but fails to connect within 60s, enable QR fallback (or Pairing fallback if PAIRING_NUMBER is provided).
     let connectionTimeout = null;
     if (process.env.SESSION_ID) {
         connectionTimeout = setTimeout(async () => {
-            if (!sock.user) {
-                console.log("⚠️  Session ID failed to connect within 30s. Enabling QR fallback...");
+            if (!sock.user && !global.isSockConnected) {
+                console.log("⚠️  Session ID failed to connect within 60s. Enabling QR fallback...");
                 process.env.SESSION_ID_FAILED = "true";
 
                 if (process.env.PAIRING_NUMBER && process.env.PAIRING_NUMBER.trim() !== "") {
@@ -338,7 +338,7 @@ async function connectionLogic() {
                     }
                 }
             }
-        }, 30000);
+        }, 60000);
     }
 
     if (usePairingCode && !state.creds.registered && !process.env.SESSION_ID) {
@@ -384,6 +384,13 @@ async function connectionLogic() {
         }
 
         if (connection === "open") {
+            if (connectionTimeout) {
+                clearTimeout(connectionTimeout);
+                connectionTimeout = null;
+            }
+            delete process.env.SESSION_ID_FAILED;
+            delete process.env.SESSION_ID_INVALID;
+            global.isSockConnected = true;
             global.latestQr = null;
             isReconnecting = false;
             consecutiveFailures = 0; // Reset failure counter on successful connection
@@ -573,8 +580,9 @@ async function connectionLogic() {
                 [DisconnectReason.multideviceMismatch]: "Multi-Device Mismatch — Please re-pair your WhatsApp device."
             };
 
-            // Detect network-related errors vs session errors
-            const isNetworkError =
+            global.isSockConnected = false;
+            // Detect network-related or transient stream errors vs true credential invalidation
+            const isTransientError =
                 lastDisconnect?.error?.code === "ENOTFOUND" ||
                 lastDisconnect?.error?.code === "EAI_AGAIN" ||
                 lastDisconnect?.error?.code === "ECONNREFUSED" ||
@@ -582,16 +590,17 @@ async function connectionLogic() {
                 lastDisconnect?.error?.code === "ECONNRESET" ||
                 statusCode === DisconnectReason.connectionLost ||
                 statusCode === DisconnectReason.connectionClosed ||
-                statusCode === DisconnectReason.timedOut;
+                statusCode === DisconnectReason.timedOut ||
+                statusCode === DisconnectReason.restartRequired;
 
             const reasonMessage = REASON_EXPLANATIONS[statusCode] || 
-                (isNetworkError ? "Network Connection Lost — Host internet unstable/reconnecting..." : `Unexpected Disconnect (Status Code: ${statusCode || 'Unknown'})`);
+                (isTransientError ? "Network Connection Lost / Transient Restart — Reconnecting..." : `Unexpected Disconnect (Status Code: ${statusCode || 'Unknown'})`);
 
             console.log(`🔌 [DISCONNECT] ${reasonMessage}`);
 
-            if (!isNetworkError) {
+            if (!isTransientError) {
                 consecutiveFailures++;
-                console.log(`⚠️ [HEALTH] Non-network failure counter: ${consecutiveFailures}/5`);
+                console.log(`⚠️ [HEALTH] Non-transient failure counter: ${consecutiveFailures}/5`);
             }
 
             if (statusCode === DisconnectReason.loggedOut || consecutiveFailures >= 5) {
@@ -628,7 +637,7 @@ async function connectionLogic() {
 
                 setTimeout(() => connectionLogic(), 5000);
             } else {
-                const delay = 10000;
+                const delay = statusCode === DisconnectReason.restartRequired ? 2000 : 8000;
                 console.log(`🔄 [RECONNECT] Attempting reconnect in ${delay / 1000} seconds...`);
                 setTimeout(() => connectionLogic(), delay);
             }
