@@ -28,26 +28,39 @@ class JsonStore {
         }
     }
 
-    save() {
-        if (this.saveTimeout) clearTimeout(this.saveTimeout);
-        
+    save(immediate = false) {
+        if (this.saveTimeout) {
+            clearTimeout(this.saveTimeout);
+            this.saveTimeout = null;
+        }
+
+        if (immediate) {
+            return this.saveSync();
+        }
+
         this.saveTimeout = setTimeout(() => {
-            try {
-                const dir = path.dirname(STORAGE_FILE);
-                if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
-                
-                const data = JSON.stringify(this.cache); // Fast serialization without spaces/replacer to save CPU
-                fs.writeFile(STORAGE_FILE, data, "utf-8", (err) => {
-                    if (err) {
-                        console.error("❌ JsonStore Save Error:", err.message);
-                    }
-                });
-                this.saveTimeout = null;
-            } catch (e) {
-                console.error("❌ JsonStore Save Error:", e.message);
-                this.saveTimeout = null;
-            }
+            this.saveSync();
         }, 5000); // Debounce for 5 seconds to batch multiple writes together
+    }
+
+    saveSync() {
+        if (this.saveTimeout) {
+            clearTimeout(this.saveTimeout);
+            this.saveTimeout = null;
+        }
+        try {
+            const dir = path.dirname(STORAGE_FILE);
+            if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+
+            const data = JSON.stringify(this.cache);
+            fs.writeFileSync(STORAGE_FILE, data, "utf-8");
+        } catch (e) {
+            console.error("❌ JsonStore Save Error:", e.message);
+        }
+    }
+
+    flush() {
+        this.saveSync();
     }
 
     getAll() {
@@ -58,7 +71,7 @@ class JsonStore {
         return this.cache[key] !== undefined ? this.cache[key] : defaultValue;
     }
 
-    set(key, value) {
+    set(key, value, immediate = false) {
         if (value && typeof value === "object" && !Array.isArray(value)) {
             const cleanObj = {};
             for (const k in value) {
@@ -70,14 +83,14 @@ class JsonStore {
         } else {
             this.cache[key] = value;
         }
-        this.save();
+        this.save(immediate);
     }
 
     async findOrCreate(options) {
         const key = `settings_${options.where.id}`;
         if (!this.cache[key]) {
             this.cache[key] = options.defaults;
-            this.save();
+            this.save(true);
         }
         const data = this.cache[key];
         const result = {
@@ -93,15 +106,30 @@ class JsonStore {
                 }
             }
             Object.assign(this.cache[key], cleanUpdates);
-            this.save();
+            this.save(true);
             return result;
         };
         result.save = async () => {
-            this.save();
+            this.save(true);
             return result;
         };
         return [result];
     }
 }
 
-module.exports = new JsonStore();
+const instance = new JsonStore();
+
+// Process exit hooks to ensure debounced settings are never lost on exit/restart
+const flushStoreOnExit = () => {
+    try {
+        instance.flush();
+    } catch (e) { }
+};
+
+process.on("exit", flushStoreOnExit);
+process.on("beforeExit", flushStoreOnExit);
+process.on("SIGINT", () => { flushStoreOnExit(); });
+process.on("SIGTERM", () => { flushStoreOnExit(); });
+
+module.exports = instance;
+

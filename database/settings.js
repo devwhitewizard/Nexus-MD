@@ -105,6 +105,8 @@ const getBotSettings = async () => {
             where: { id: 1 },
             defaults
         });
+        // Sync SQLite settings into jsonStore for failover protection
+        jsonStore.set("settings_1", settings.dataValues || settings, true);
         return settings;
     } catch (e) {
         console.error("❌ getBotSettings Fallback:", e.message);
