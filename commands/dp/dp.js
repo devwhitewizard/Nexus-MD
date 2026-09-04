@@ -52,7 +52,7 @@ const RATING_CAPTIONS = [
 ];
 
 // Helper Functions
-const getTarget = (msg, args, sender) => {
+const getTarget = (msg, args, sender, jid) => {
     let target = msg.message?.extendedTextMessage?.contextInfo?.mentionedJid?.[0] || 
                  (msg.message?.extendedTextMessage?.contextInfo?.quotedMessage ? msg.message.extendedTextMessage.contextInfo.participant : null) ||
                  msg.message?.extendedTextMessage?.contextInfo?.participant ||
@@ -64,6 +64,11 @@ const getTarget = (msg, args, sender) => {
             target = `${cleanNum}@s.whatsapp.net`;
         }
     }
+
+    if (!target && jid && jid.endsWith("@s.whatsapp.net") && jid !== sender) {
+        target = jid;
+    }
+
     return target || sender;
 };
 
@@ -157,7 +162,7 @@ const makeEffectCommand = (name, desc, effectFn) => {
         category: "dp",
         execute: async ({ sock, jid, msg, args, sender }) => {
             try {
-                const target = getTarget(msg, args, sender);
+                const target = getTarget(msg, args, sender, jid);
                 await sock.sendMessage(jid, { text: "⏳ *Applying DP Effect...* Please wait." }, { quoted: msg });
                 
                 const buffer = await getDpBuffer(sock, target);
@@ -183,7 +188,7 @@ const makeOverlayCommand = (name, desc, type) => {
         category: "dp",
         execute: async ({ sock, jid, msg, args, sender }) => {
             try {
-                const target = getTarget(msg, args, sender);
+                const target = getTarget(msg, args, sender, jid);
                 await sock.sendMessage(jid, { text: "⏳ *Generating Funny DP Edit...* Please wait." }, { quoted: msg });
                 
                 const buffer = await getDpBuffer(sock, target);
@@ -209,7 +214,7 @@ const makeInteractionCommand = (name, desc, configName) => {
         category: "dp",
         execute: async ({ sock, jid, msg, args, sender }) => {
             try {
-                const target = getTarget(msg, args, sender);
+                const target = getTarget(msg, args, sender, jid);
                 if (target === sender) {
                     return await sock.sendMessage(jid, { text: "❌ Please mention or quote another user to interact with!" }, { quoted: msg });
                 }
@@ -243,7 +248,7 @@ module.exports = {
         category: "dp",
         execute: async ({ sock, jid, msg, args, sender }) => {
             try {
-                const target = getTarget(msg, args, sender);
+                const target = getTarget(msg, args, sender, jid);
                 const url = await getDpUrl(sock, target);
                 
                 await sock.sendMessage(jid, {
@@ -262,7 +267,7 @@ module.exports = {
         category: "dp",
         execute: async ({ sock, jid, msg, args, sender }) => {
             try {
-                const target = getTarget(msg, args, sender);
+                const target = getTarget(msg, args, sender, jid);
                 const url = await sock.profilePictureUrl(target, 'image').catch(() => getDpUrl(sock, target));
                 
                 await sock.sendMessage(jid, {
@@ -281,7 +286,7 @@ module.exports = {
         category: "dp",
         execute: async ({ sock, jid, msg, args, sender }) => {
             try {
-                const target = getTarget(msg, args, sender);
+                const target = getTarget(msg, args, sender, jid);
                 const url = await getDpUrl(sock, target);
                 await sock.sendMessage(jid, {
                     image: { url },
@@ -363,7 +368,7 @@ module.exports = {
         category: "dp",
         execute: async ({ sock, jid, msg, args, sender }) => {
             try {
-                const target = getTarget(msg, args, sender);
+                const target = getTarget(msg, args, sender, jid);
                 await sock.sendMessage(jid, { text: "⏳ *Preparing uncompressed file...*" }, { quoted: msg });
                 
                 const buffer = await getDpBuffer(sock, target);
@@ -385,7 +390,7 @@ module.exports = {
         category: "dp",
         execute: async ({ sock, jid, msg, args, sender }) => {
             try {
-                const target = getTarget(msg, args, sender);
+                const target = getTarget(msg, args, sender, jid);
                 
                 // Track latest DP to keep archive fresh before reading history
                 await trackDp(sock, target).catch(() => {});
@@ -430,7 +435,7 @@ module.exports = {
         category: "dp",
         execute: async ({ sock, jid, msg, args, sender }) => {
             try {
-                const target = getTarget(msg, args, sender);
+                const target = getTarget(msg, args, sender, jid);
                 await sock.sendMessage(jid, { text: "🔍 *Checking if profile picture has changed...*" }, { quoted: msg });
                 
                 const result = await trackDp(sock, target);
@@ -459,7 +464,7 @@ module.exports = {
         category: "dp",
         execute: async ({ sock, jid, msg, args, sender }) => {
             try {
-                const target = getTarget(msg, args, sender);
+                const target = getTarget(msg, args, sender, jid);
                 
                 // Deterministic random rating based JID/Day so it doesn't change every second
                 const seed = `${target}_${new Date().toDateString()}`;

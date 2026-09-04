@@ -47,25 +47,10 @@ module.exports = {
             return await sock.sendMessage(jid, { text: "❌ Invalid image buffer received." }, { quoted: msg });
         }
 
-        let updatedProfile = false;
-        let updatedBanner = false;
-        let errors = [];
-
-        // 1. Update WhatsApp Profile Picture
+        // Update local banner images (Nexuspic.jpg and botnexus.png) & settings
         try {
-            await sock.sendMessage(jid, { text: "⏳ Updating WhatsApp profile picture..." }, { quoted: msg });
-            const rawBotJid = sock.user?.id || global.myJid || "";
-            const botJid = rawBotJid ? (rawBotJid.split(":")[0] + "@s.whatsapp.net") : jid;
-            
-            await sock.updateProfilePicture(botJid, buffer);
-            updatedProfile = true;
-        } catch (err) {
-            console.error("WhatsApp Profile Picture Update Error:", err);
-            errors.push(`WhatsApp Profile Picture: ${err.message || err}`);
-        }
+            await sock.sendMessage(jid, { text: "⏳ Updating bot menu & banner image..." }, { quoted: msg });
 
-        // 2. Update local banner images (Nexuspic.jpg and botnexus.png) & settings
-        try {
             const nexusPicPath = path.join(__dirname, "../../assets/Nexuspic.jpg");
             const botNexusPath = path.join(__dirname, "../../assets/botnexus.png");
 
@@ -74,20 +59,11 @@ module.exports = {
             
             const botImageUrl = (args[0] && args[0].startsWith("http")) ? args[0] : "Local Custom";
             await updateSettings({ botImage: botImageUrl });
-            updatedBanner = true;
+
+            await sock.sendMessage(jid, { text: "✅ Bot menu and banner image updated successfully! (Your personal WhatsApp profile picture was not changed)" }, { quoted: msg });
         } catch (err) {
             console.error("Local Bot Banner Image Update Error:", err);
-            errors.push(`Local Banner Image: ${err.message || err}`);
-        }
-
-        if (updatedProfile && updatedBanner) {
-            await sock.sendMessage(jid, { text: "✅ Bot profile picture and menu/banner image updated successfully!" }, { quoted: msg });
-        } else if (updatedProfile) {
-            await sock.sendMessage(jid, { text: "✅ Bot WhatsApp profile picture updated successfully! (Local banner update failed)" }, { quoted: msg });
-        } else if (updatedBanner) {
-            await sock.sendMessage(jid, { text: "✅ Local menu/banner image updated successfully! (WhatsApp profile picture update failed)" }, { quoted: msg });
-        } else {
-            await sock.sendMessage(jid, { text: `❌ Failed to update bot image:\n${errors.join("\n")}` }, { quoted: msg });
+            await sock.sendMessage(jid, { text: `❌ Failed to update bot banner image: ${err.message}` }, { quoted: msg });
         }
     }
 };
