@@ -11,7 +11,7 @@ global.sudo  = process.env.SUDO   || "254101010101";
 global.owner = process.env.OWNERS || process.env.SUDO || "254101010101";
 
 // 🤖 Bot Identity
-global.botname = process.env.BOT_NAME || "NEXUS-MD";
+global.botname = process.env.BOT_NAME || "Nexus-MD";
 
 // 🔑 Session & Connection
 global.session       = process.env.SESSION_ID     || "";

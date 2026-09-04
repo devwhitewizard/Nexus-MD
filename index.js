@@ -479,55 +479,62 @@ async function connectionLogic() {
 
             if (isFirstConnect) {
                 isFirstConnect = false;
-                const path = require("path");
-                const fs = require("fs");
-                const { authFolder, version } = require("./config");
+                const jsonStore = require("./nexus/jsonStore");
 
-                // Generate Session ID (sent to owner DM only — not printed to logs)
-                const credsPath = path.join(authFolder, "creds.json");
-                let sessionId = "NO_CREDS_FOUND";
-                if (fs.existsSync(credsPath)) {
-                    const creds = fs.readFileSync(credsPath, "utf-8");
-                    sessionId = "NEXUS~" + Buffer.from(creds).toString("base64");
-                }
+                // Only send startup connection message once on initial setup (remember across restarts via storage)
+                if (!jsonStore.get("startup_welcome_sent")) {
+                    jsonStore.set("startup_welcome_sent", true);
 
-                // 💎 PREMIUM USER MESSAGE
-                const { getSettings } = require("./lib/settings");
-                const { sendButtonMessage } = require("./lib/utils");
-                const settings = getSettings();
-                const botName = settings.botName || "Nexus-MD";
-                const CHANNEL_URL = "https://whatsapp.com/channel/0029VbD62UY7UYU6cftzu02";
-                const REPO_URL = "https://github.com/devwhitewizard/nexus-v1md";
+                    const path = require("path");
+                    const fs = require("fs");
+                    const { authFolder, version } = require("./config");
 
-                const connectButtons = [
-                    { text: "💻 GitHub Repo", url: REPO_URL }
-                ];
-
-                const userWelcomeText = `✨ *${botName} v${version} Connected!* ✨\n\n` +
-                    `🤖 *Status:* Connected.\n` +
-                    `✅ *Secure:* Your connection is stable and encrypted.\n\n` +
-                    `🌟 *Welcome!* Type *.menu* to see what I can do!`;
-
-                const adminAlertText = `🛠️ *${botName} v${version}: Connection Established*\n\n` +
-                    `📦 *Session:* Restored/Initialized\n` +
-                    `💾 *Storage:* Nexus-MD-100%\n\n` +
-                    `> Session ID has been printed to your private console.`;
-
-                // 📡 Reliable Message Delivery
-                setTimeout(async () => {
-                    try {
-                        console.log("📨 Sending startup welcome message to bot with CTA buttons...");
-                        await sendButtonMessage(sock, global.myJid, userWelcomeText, botName, connectButtons, null, null);
-                        console.log("✅ Startup message sent successfully.");
-
-                        if (primarySudo && primarySudo !== global.myJid && isSudo(primarySudo)) {
-                            console.log(`🛰️ Sending tech alert to Sudo: ${primarySudo}`);
-                            await sendButtonMessage(sock, primarySudo, adminAlertText, botName, connectButtons, null, null);
-                        }
-                    } catch (e) {
-                        console.error("⚠️ Failed to send startup message:", e.message);
+                    // Generate Session ID (sent to owner DM only — not printed to logs)
+                    const credsPath = path.join(authFolder, "creds.json");
+                    let sessionId = "NO_CREDS_FOUND";
+                    if (fs.existsSync(credsPath)) {
+                        const creds = fs.readFileSync(credsPath, "utf-8");
+                        sessionId = "NEXUS~" + Buffer.from(creds).toString("base64");
                     }
-                }, 5000); // 5s delay to ensure socket is ready for message sending
+
+                    // 💎 PREMIUM USER MESSAGE
+                    const { getSettings } = require("./lib/settings");
+                    const { sendButtonMessage } = require("./lib/utils");
+                    const settings = getSettings();
+                    const botName = settings.botName || "Nexus-MD";
+                    const CHANNEL_URL = "https://whatsapp.com/channel/0029VbD62UY7UYU6cftzu02";
+                    const REPO_URL = "https://github.com/devwhitewizard/nexus-v1md";
+
+                    const connectButtons = [
+                        { text: "💻 GitHub Repo", url: REPO_URL }
+                    ];
+
+                    const userWelcomeText = `✨ *${botName} v${version} Connected!* ✨\n\n` +
+                        `🤖 *Status:* Connected.\n` +
+                        `✅ *Secure:* Your connection is stable and encrypted.\n\n` +
+                        `🌟 *Welcome!* Type *.menu* to see what I can do!`;
+
+                    const adminAlertText = `🛠️ *${botName} v${version}: Connection Established*\n\n` +
+                        `📦 *Session:* Restored/Initialized\n` +
+                        `💾 *Storage:* Nexus-MD-100%\n\n` +
+                        `> Session ID has been printed to your private console.`;
+
+                    // 📡 Reliable Message Delivery
+                    setTimeout(async () => {
+                        try {
+                            console.log("📨 Sending startup welcome message to bot with CTA buttons...");
+                            await sendButtonMessage(sock, global.myJid, userWelcomeText, botName, connectButtons, null, null);
+                            console.log("✅ Startup message sent successfully.");
+
+                            if (primarySudo && primarySudo !== global.myJid && isSudo(primarySudo)) {
+                                console.log(`🛰️ Sending tech alert to Sudo: ${primarySudo}`);
+                                await sendButtonMessage(sock, primarySudo, adminAlertText, botName, connectButtons, null, null);
+                            }
+                        } catch (e) {
+                            console.error("⚠️ Failed to send startup message:", e.message);
+                        }
+                    }, 5000); // 5s delay to ensure socket is ready for message sending
+                }
             }
 
 
@@ -629,6 +636,9 @@ async function connectionLogic() {
                     process.env.SESSION_ID_INVALID = "true";
                     delete process.env.SESSION_ID;
                 }
+
+                const jsonStore = require("./nexus/jsonStore");
+                jsonStore.set("startup_welcome_sent", false);
 
                 const fs = require("fs");
                 const path = require("path");
