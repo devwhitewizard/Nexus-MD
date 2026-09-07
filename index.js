@@ -463,16 +463,14 @@ async function connectionLogic() {
             }
 
             const myJid = (sock.user && sock.user.id) || (sock.authState.creds.me && sock.authState.creds.me.id) || (sock.authState.creds.me && sock.authState.creds.me.lid) || "";
-            const cleanJid = myJid.split(":")[0];
-            const domain = myJid.includes("@lid") ? "@lid" : "@s.whatsapp.net";
-            global.myJid = cleanJid ? cleanJid + domain : "";
+            const { toJid } = require("./lib/utils");
+            global.myJid = toJid(myJid);
 
             console.log(`📊 Unified settings loaded. SELF-ID: ${global.myJid}`);
 
             // 🛡️ Super-Admin Detection
             const { isSudo } = require("./lib/middleware");
             const { ownerNumbers } = require("./config");
-            const { toJid } = require("./lib/utils");
             const primarySudo = process.env.SUDO ? toJid(process.env.SUDO) : toJid(ownerNumbers[0]);
 
             console.log(`🛡️  Super-Admin (SUDO): ${primarySudo || "NOT CONFIGURED"}`);
@@ -483,7 +481,7 @@ async function connectionLogic() {
 
                 // Only send startup connection message once on initial setup (remember across restarts via storage)
                 if (!jsonStore.get("startup_welcome_sent")) {
-                    jsonStore.set("startup_welcome_sent", true);
+                    jsonStore.set("startup_welcome_sent", true, true);
 
                     const path = require("path");
                     const fs = require("fs");
@@ -526,7 +524,10 @@ async function connectionLogic() {
                             await sendButtonMessage(sock, global.myJid, userWelcomeText, botName, connectButtons, null, null);
                             console.log("✅ Startup message sent successfully.");
 
-                            if (primarySudo && primarySudo !== global.myJid && isSudo(primarySudo)) {
+                            const myDigits = global.myJid ? global.myJid.replace(/\D/g, "") : "";
+                            const sudoDigits = primarySudo ? primarySudo.replace(/\D/g, "") : "";
+
+                            if (primarySudo && sudoDigits && myDigits && sudoDigits !== myDigits && isSudo(primarySudo)) {
                                 console.log(`🛰️ Sending tech alert to Sudo: ${primarySudo}`);
                                 await sendButtonMessage(sock, primarySudo, adminAlertText, botName, connectButtons, null, null);
                             }
