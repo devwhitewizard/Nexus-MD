@@ -11,7 +11,7 @@ module.exports = {
                      `✨ *Name:* White Wizard\n` +
                      `🌐 *WhatsApp:* @whitewizard001 (https://wa.me/whitewizard001)\n` +
                      `👨‍💻 *Bio:* My passion and only purpose here is coding. I love building tools that make life easier and more fun!\n\n` +
-                     `🌐 *Portfolio:* https://jonathanmwanza.vercel.app/\n` +
+                     `🌐 *Portfolio:* https://whitewizard.top/\n` +
                      `📂 *GitHub:* https://github.com/devwhitewizard\n\n` +
                      `_\"Magic is just science we don't understand yet, and code is the closest thing to magic I've found.\"_`;
 
@@ -21,8 +21,13 @@ module.exports = {
 
         try {
             let banner;
+            const nyxaraPath = path.join(__dirname, "../../assets/nyxara.jpg");
+            const defaultPath = path.join(__dirname, "../../assets/Nexuspic.jpg");
+
             if (botImageUrl && botImageUrl.startsWith("http")) {
                 banner = { url: botImageUrl };
+            } else if (fs.existsSync(nyxaraPath)) {
+                banner = fs.readFileSync(nyxaraPath);
             } else {
                 const imgPath = path.join(__dirname, "../../assets/Nexuspic.jpg");
                 banner = fs.readFileSync(imgPath);

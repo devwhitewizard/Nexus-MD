@@ -1,9 +1,11 @@
 const path = require("path");
-const envResult = require("dotenv").config({ path: path.join(__dirname, "config.env") });
+const fs = require("fs");
+const envPath = fs.existsSync(path.join(__dirname, ".env")) ? path.join(__dirname, ".env") : path.join(__dirname, "config.env");
+const envResult = require("dotenv").config({ path: envPath });
 if (envResult.error) {
-    console.log("⚠️  Could not find config.env file. Using system environment variables instead.");
+    console.log("⚠️  Could not find environment file (.env / config.env). Using system environment variables instead.");
 } else {
-    console.log("✅ config.env file loaded successfully.");
+    console.log(`✅ ${path.basename(envPath)} file loaded successfully.`);
 }
 
 // ── Log Noise Filter ─────────────────────────────────────────────────────────
@@ -112,8 +114,8 @@ async function connectionLogic() {
     const fs = require("fs");
     const path = require("path");
 
-    // 🔑 SESSION ID FROM root settings.js / environment
-    if (!process.env.SESSION_ID) {
+    // 🔑 SESSION ID FROM root settings.js / environment (Skip if marked invalid due to logout)
+    if (!process.env.SESSION_ID && !process.env.SESSION_ID_INVALID) {
         const rootSettings = require("./settings");
         const settingsSessionId = rootSettings.SESSION_ID || rootSettings.sessionName || rootSettings.session || global.session;
         if (settingsSessionId && settingsSessionId.trim()) {
@@ -123,7 +125,24 @@ async function connectionLogic() {
     }
 
     // 📦 SESSION ID AUTO-RESTORE & DUMMY CHECK
-    if (process.env.SESSION_ID) {
+    const credsPath = path.join(authFolder, "creds.json");
+    let hasExistingValidSession = false;
+    if (fs.existsSync(credsPath)) {
+        try {
+            const rawCreds = fs.readFileSync(credsPath, "utf-8");
+            const parsed = JSON.parse(rawCreds);
+            if (parsed && parsed.registered && (parsed.noiseKey || parsed.me)) {
+                hasExistingValidSession = true;
+                console.log("📦 Active live session found in session/creds.json. Preserving updated key ratchets.");
+            }
+        } catch (e) {
+            console.log("⚠️ Existing creds.json is invalid or corrupted. Will restore from SESSION_ID...");
+        }
+    }
+
+    if (process.env.SESSION_ID_INVALID === "true") {
+        console.log("ℹ️ Session credentials were logged out or unlinked. Ready for fresh QR Code / Pairing Code login.");
+    } else if (process.env.SESSION_ID && !hasExistingValidSession) {
         let rawId = process.env.SESSION_ID.trim().replace(/^["']|["']$/g, "").trim();
         if (rawId.includes("SESSION_ID=")) {
             rawId = rawId.split("SESSION_ID=")[1].trim();
@@ -142,7 +161,7 @@ async function connectionLogic() {
             console.log("ℹ️ Placeholder or invalid SESSION_ID detected. Ignoring SESSION_ID to allow QR/Pairing mode.");
             delete process.env.SESSION_ID;
         } else {
-            console.log("📦 SESSION_ID detected in environment variables. Verifying & restoring credentials...");
+            console.log("📦 Initializing credentials from SESSION_ID environment variable...");
             try {
                 // Support URL-safe base64 (- and _) and fix missing padding =
                 let safeBase64 = sessionId.replace(/-/g, "+").replace(/_/g, "/");
@@ -239,10 +258,17 @@ async function connectionLogic() {
         }
     }
 
-    const pairingNum = process.env.PAIRING_NUMBER || global.pairingNumber;
-    const usePairingCode = !!pairingNum && !state.creds.registered;
-    if (!state.creds.registered && !pairingNum && !process.env.SESSION_ID) {
-        console.log("ℹ️  No PAIRING_NUMBER or SESSION_ID found. Defaulting to QR code login.");
+    const authMode = (process.env.AUTH_MODE || process.env.MODE_AUTH || "").trim().toLowerCase();
+    const explicitPairingNum = process.env.PAIRING_NUMBER ? process.env.PAIRING_NUMBER.trim() : "";
+    const pairingNum = explicitPairingNum ? explicitPairingNum.replace(/[^0-9]/g, "") : "";
+    const usePairingCode = !state.creds.registered && (authMode === "pairing" || (authMode !== "qr" && !!pairingNum));
+
+    if (!state.creds.registered && !process.env.SESSION_ID) {
+        if (usePairingCode && pairingNum) {
+            console.log(`📲 Auth Mode: PAIRING CODE active (+${pairingNum})`);
+        } else {
+            console.log("📲 Auth Mode: QR CODE active. Scan terminal QR code or open web interface.");
+        }
     }
 
     const NodeCache = require("node-cache");
@@ -327,48 +353,47 @@ async function connectionLogic() {
         return await originalSendMessage(jid, msgPayload, options);
     };
 
-    // ⌚ WATCHDOG: If SESSION_ID is present but fails to connect within 60s, enable QR fallback (or Pairing fallback if PAIRING_NUMBER is provided).
+    let pairingCodeRequested = false;
+    const requestAndPrintPairingCode = async (phone) => {
+        if (pairingCodeRequested || !phone) return;
+        pairingCodeRequested = true;
+        try {
+            console.log(`📡 Requesting pairing code for +${phone}...`);
+            const code = await sock.requestPairingCode(phone);
+            console.clear();
+            console.log("\n========================================");
+            console.log("🔗 YOUR NEXUS-MD PAIRING CODE:");
+            console.log(`👉 ${code} 👈`);
+            console.log("========================================");
+            console.log("1. Open WhatsApp on your phone.");
+            console.log("2. Go to Linked Devices > Link with Phone Number.");
+            console.log(`3. Enter the code shown above.\n`);
+        } catch (err) {
+            console.error("❌ Failed to generate pairing code:", err.message || err);
+            pairingCodeRequested = false;
+        }
+    };
+
+    // ⌚ WATCHDOG: If SESSION_ID is present but fails to connect within 60s, enable Pairing Code fallback.
     let connectionTimeout = null;
     if (process.env.SESSION_ID) {
         connectionTimeout = setTimeout(async () => {
             if (!sock.user && !global.isSockConnected) {
-                console.log("⚠️  Session ID failed to connect within 60s. Enabling QR fallback...");
+                console.log("⚠️  Session ID failed to connect within 60s. Falling back to Pairing Code...");
                 process.env.SESSION_ID_FAILED = "true";
-
-                if (process.env.PAIRING_NUMBER && process.env.PAIRING_NUMBER.trim() !== "") {
-                    try {
-                        let pNumber = process.env.PAIRING_NUMBER.replace(/[^0-9]/g, "");
-                        console.log(`📡 Requesting fresh pairing code for ${pNumber}...`);
-                        const code = await sock.requestPairingCode(pNumber);
-                        console.log("\n========================================");
-                        console.log("🔗 YOUR NEXUS-MD PAIRING CODE:");
-                        console.log(`👉 ${code} 👈`);
-                        console.log("========================================\n");
-                    } catch (err) {
-                        console.error("❌ Failed to generate fallback pairing code:", err.message);
-                    }
+                if (pairingNum) {
+                    await requestAndPrintPairingCode(pairingNum);
+                } else {
+                    console.log("⚠️ No phone number provided for pairing code. Defaulting to QR code.");
                 }
             }
         }, 60000);
     }
 
-    if (usePairingCode && !state.creds.registered && !process.env.SESSION_ID) {
+    if (usePairingCode && !state.creds.registered && !process.env.SESSION_ID && pairingNum) {
         setTimeout(async () => {
-            try {
-                let pNumber = process.env.PAIRING_NUMBER.replace(/[^0-9]/g, "");
-                const code = await sock.requestPairingCode(pNumber);
-                console.clear();
-                console.log("\n========================================");
-                console.log("🔗 YOUR NEXUS-MD PAIRING CODE:");
-                console.log(`👉 ${code} 👈`);
-                console.log("========================================\n");
-                console.log("1. Open WhatsApp on your phone.");
-                console.log("2. Go to Linked Devices > Link with Phone Number.");
-                console.log(`3. Enter the code shown above.`);
-            } catch (err) {
-                console.error("❌ Failed to generate pairing code:", err);
-            }
-        }, 6000);
+            await requestAndPrintPairingCode(pairingNum);
+        }, 5000);
     }
 
     sock.ev.on("creds.update", saveCreds);
@@ -378,20 +403,22 @@ async function connectionLogic() {
 
         if (qr) {
             global.latestQr = qr;
-        }
-
-        const appUrl = process.env.HEROKU_APP_NAME 
-            ? `https://${process.env.HEROKU_APP_NAME}.herokuapp.com/qr` 
-            : (process.env.APP_URL ? `${process.env.APP_URL.replace(/\/$/, "")}/qr` : `http://localhost:${PORT}/qr`);
-
-        if (qr && (!process.env.SESSION_ID || process.env.SESSION_ID_FAILED) && !usePairingCode) {
-            console.clear();
-            console.log("💡 QR Code too big, distorted, or hard to scan?");
-            console.log(`👉 Open ${appUrl} in your web browser for a clean, high-res QR code!\n`);
-            console.log("📲 Scan this QR to login:\n");
-            qrcode.generate(qr, { small: true });
-            console.log("\n💡 QR Code too big, distorted, or hard to scan?");
-            console.log(`👉 Open ${appUrl} in your web browser for a clean, high-res QR code!\n`);
+            if ((!process.env.SESSION_ID || process.env.SESSION_ID_FAILED) && !state.creds.registered) {
+                if (usePairingCode && pairingNum) {
+                    await requestAndPrintPairingCode(pairingNum);
+                } else {
+                    const appUrl = process.env.HEROKU_APP_NAME 
+                        ? `https://${process.env.HEROKU_APP_NAME}.herokuapp.com/qr` 
+                        : (process.env.APP_URL ? `${process.env.APP_URL.replace(/\/$/, "")}/qr` : `http://localhost:${PORT}/qr`);
+                    console.clear();
+                    console.log("💡 QR Code too big, distorted, or hard to scan?");
+                    console.log(`👉 Open ${appUrl} in your web browser for a clean, high-res QR code!\n`);
+                    console.log("📲 Scan this QR to login:\n");
+                    qrcode.generate(qr, { small: true });
+                    console.log("\n💡 QR Code too big, distorted, or hard to scan?");
+                    console.log(`👉 Open ${appUrl} in your web browser for a clean, high-res QR code!\n`);
+                }
+            }
         }
 
         if (connection === "open") {
@@ -631,12 +658,10 @@ async function connectionLogic() {
                 consecutiveFailures = 0; // Reset counter
                 hasWipedSessionOnStartup = false; // Reset wipe flag
 
-                // Mark SESSION_ID as invalid to avoid endless retry loops
-                if (process.env.SESSION_ID) {
-                    console.log("⚠️ [SELF-HEALING] SESSION_ID marked invalid for this run. Bot will wait for fresh login.");
-                    process.env.SESSION_ID_INVALID = "true";
-                    delete process.env.SESSION_ID;
-                }
+                // Mark SESSION_ID as invalid to prevent restoring dead session
+                process.env.SESSION_ID_INVALID = "true";
+                delete process.env.SESSION_ID;
+                console.log("⚠️ [SELF-HEALING] Session marked invalid for this run. Bot will wait for fresh QR Code / Pairing login.");
 
                 const jsonStore = require("./nexus/jsonStore");
                 jsonStore.set("startup_welcome_sent", false);
@@ -667,23 +692,31 @@ async function connectionLogic() {
     });
 
     const { handleAutomation } = require("./lib/automation");
+    const { logMessageCard } = require("./lib/logger");
     sock.ev.on("messages.upsert", async (upsert) => {
         // Only process live incoming messages — skip historical replays and pre-startup messages
         if (upsert.type !== "notify") return;
 
-        const m = upsert.messages[0];
-        if (!m.message) return;
+        for (const m of upsert.messages) {
+            if (!m.message) continue;
 
-        // Discard messages that were sent before the bot connected this session
-        const msgTime = m.messageTimestamp ? Number(m.messageTimestamp) : 0;
-        if (global.botStartTime && msgTime < global.botStartTime) {
-            console.log(`⏩ Skipping pre-startup message (${new Date(msgTime * 1000).toLocaleTimeString()})`);
-            return;
+            // Discard messages that were sent before the bot connected this session
+            const msgTime = m.messageTimestamp ? Number(m.messageTimestamp) : 0;
+            if (global.botStartTime && msgTime < global.botStartTime) {
+                console.log(`⏩ Skipping pre-startup message (${new Date(msgTime * 1000).toLocaleTimeString()})`);
+                continue;
+            }
+
+            // Log message in Cypher-X terminal card format
+            logMessageCard(m);
         }
 
-        // Run automation in background to prevent blocking command replies (e.g. status-view delays)
-        handleAutomation(sock, m).catch(err => console.error("⚠️ Automation Error:", err));
-        await handleMessages(sock, upsert);
+        const m = upsert.messages[0];
+        if (m && m.message) {
+            // Run automation in background to prevent blocking command replies (e.g. status-view delays)
+            handleAutomation(sock, m).catch(err => console.error("⚠️ Automation Error:", err));
+            await handleMessages(sock, upsert);
+        }
     });
 
     const { handleMessageDelete } = require("./lib/automation");

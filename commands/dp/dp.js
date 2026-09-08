@@ -4,7 +4,7 @@ const fs = require("fs");
 const path = require("path");
 const { trackDp, getDpHistory } = require("../../nexus/dpModel");
 
-const DEFAULT_AVATAR = "https://i.imgur.com/8Q4sLzJ.png";
+const DEFAULT_AVATAR = path.join(__dirname, "../../assets/botnexus.png");
 
 // Curated overlay templates (transparency built-in)
 const OVERLAY_TEMPLATES = {
@@ -74,20 +74,29 @@ const getTarget = (msg, args, sender, jid) => {
 
 const getDpUrl = async (sock, jid) => {
     try {
-        return await sock.profilePictureUrl(jid, 'image');
-    } catch (e) {
-        try {
-            return await sock.profilePictureUrl(jid, 'preview');
-        } catch (err) {
-            return DEFAULT_AVATAR;
-        }
-    }
+        const url = await sock.profilePictureUrl(jid, 'image');
+        if (url) return url;
+    } catch (e) { }
+
+    try {
+        const previewUrl = await sock.profilePictureUrl(jid, 'preview');
+        if (previewUrl) return previewUrl;
+    } catch (err) { }
+
+    return DEFAULT_AVATAR;
 };
 
 const getDpBuffer = async (sock, jid) => {
     const url = await getDpUrl(sock, jid);
-    const response = await axios.get(url, { responseType: 'arraybuffer', timeout: 15000 });
-    return Buffer.from(response.data);
+    if (typeof url === "string" && fs.existsSync(url)) {
+        return fs.readFileSync(url);
+    }
+    try {
+        const response = await axios.get(url, { responseType: 'arraybuffer', timeout: 15000 });
+        return Buffer.from(response.data);
+    } catch (e) {
+        return fs.readFileSync(DEFAULT_AVATAR);
+    }
 };
 
 const applyJimpEffect = async (buffer, effectFn) => {

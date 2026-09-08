@@ -13,11 +13,11 @@ module.exports = {
                      `✨ *Version:* \`2.5.0 (Moderation)\`\n` +
                      `👨‍💻 *Developer:* \`White Wizard\`\n` +
                      `📂 *GitHub:* https://github.com/devwhitewizard/nexus-v1md\n` +
-                     `🌐 *Portfolio:* https://jonathanmwanza.vercel.app/\n\n` +
+                     `🌐 *Portfolio:* https://whitewizard.top/\n\n` +
                      `💻 *Platform:* \`${os.platform()}\`\n` +
                      `📟 *Memory:* \`${memory}MB / ${totalMem}GB\`\n` +
                      `🔋 *Node:* \`${process.version}\`\n\n` +
-                     `_Nexus-1MD is a high-performance bot designed for professional group management._`;
+                     `_Nexus-MD is a high-performance bot designed for professional group management._`;
         
         await sock.sendMessage(jid, { text: info });
     }

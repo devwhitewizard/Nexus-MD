@@ -105,9 +105,12 @@ const saveMessage = async (m, sock) => {
                     }
                     const buffer = Buffer.concat(chunks);
                     
-                    const filePath = path.join(TEMP_MEDIA_DIR, `${msgId}.${ext}`);
-                    await fs.promises.writeFile(filePath, buffer);
-                    mediaPath = filePath;
+                    if (buffer && buffer.length > 0) {
+                        const filePath = path.join(TEMP_MEDIA_DIR, `${msgId}.${ext}`);
+                        await fs.promises.writeFile(filePath, buffer);
+                        mediaPath = filePath;
+                        console.log(`📥 [Anti-Delete Cache] Cached ${mediaType} (${buffer.length} bytes) for Msg ID: ${msgId}`);
+                    }
                 }
             } catch (err) {
                 console.error("⚠️ Media download error in saveMessage:", err.message);

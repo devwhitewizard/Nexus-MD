@@ -13,7 +13,7 @@ module.exports = {
                      `📢 *Official Channel:* https://whatsapp.com/channel/0029VbD62UY7IUYU6cftzu02\n` +
                      `💬 *Support Group:* https://chat.whatsapp.com/CSPKnrOIG52LdMO06pZgNe\n\n` +
                      `👤 *Developer:* White Wizard\n` +
-                     `🌐 *Portfolio:* https://jonathanmwanza.vercel.app/\n\n` +
+                     `🌐 *Portfolio:* https://whitewizard.top/\n\n` +
                      `_Don't forget to give a ⭐ if you like the project!_`;
 
         const { getSettings } = require("../../lib/settings");
