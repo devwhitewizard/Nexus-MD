@@ -70,12 +70,17 @@ const getPanels = (s) => ({
     },
     4: {
         title: "🗑️ ANTI-DELETE",
-        desc: "Recovers deleted messages and sends them to your personal DM.",
-        status: `💠 *Status:* ${s.antiDelete ? on : off}`,
-        usage: `▸ Reply "4" or "toggle" — Toggle ON/OFF\n` +
+        desc: "Recovers deleted messages. By default reports go to your DM only. Set target to \"group\" to also post in the chat where deletion happened.",
+        status: `💠 *Status:* ${s.antiDelete ? on : off}\n` +
+                `📍 *Report Target:* ${s.antiDeleteTarget === "group" ? "🏘️ Group Chat" : "📲 Owner DM (default)"}`,
+        usage: `▸ Reply "toggle" or "4" — Toggle Anti-Delete ON/OFF\n` +
                `▸ Reply "on" or "off" — Set status\n` +
+               `▸ Reply "group" — Send reports to group chat\n` +
+               `▸ Reply "dm" — Send reports to owner DM only (default)\n` +
                `▸ \`.antidelete on\` — Enable\n` +
-               `▸ \`.antidelete off\` — Disable`
+               `▸ \`.antidelete off\` — Disable\n` +
+               `▸ \`.antidelete target group\` — Report in group\n` +
+               `▸ \`.antidelete target dm\` — Report to DM only`
     },
     5: {
         title: "📊 STATUS ANTI-DELETE",
@@ -230,7 +235,7 @@ module.exports = {
             menu += `1. 🤖 Bot Configuration — Name: ${s.botName || "Nexus-MD"} | Mode: ${s.publicMode ? "public" : "private"}\n`;
             menu += `2. 🔗 Anti-Link — Global: ${s.antiLinkGlobal === "off" ? "❌ OFF" : `✅ ${s.antiLinkGlobal.toUpperCase()}`} | Warn Limit: ${s.antiLinkLimit || 3}\n`;
             menu += `3. 🏷️ Anti-Status-Mention — Global: ${s.antiStatusMentionGlobal === "off" ? "❌ OFF" : `✅ ${s.antiStatusMentionGlobal.toUpperCase()}`} | Warn Limit: ${s.antiStatusMentionLimit || 3}\n`;
-            menu += `4. 🗑️ Anti-Delete — ${s.antiDelete ? on : off}\n`;
+            menu += `4. 🗑️ Anti-Delete — ${s.antiDelete ? on : off} | Target: ${s.antiDeleteTarget === "group" ? "🏘️ Group" : "📲 DM"}\n`;
             menu += `5. 📊 Status Anti-Delete — ${s.statusAntiDelete ? on : off}\n`;
             menu += `6. 📞 Anti-Call — ${s.antiCall ? on : off}\n`;
             menu += `7. 🎭 Group Events — Global: ${s.groupEventsGlobal ? on : off} | Promote: ${s.eventsPromote ? on : off}\n`;
@@ -287,6 +292,8 @@ module.exports = {
                 if (sub === "on") return { antiDelete: true };
                 if (sub === "off") return { antiDelete: false };
                 if (sub === "toggle" || sub === "4") return { antiDelete: !settings.antiDelete };
+                if (sub === "group") return { antiDeleteTarget: "group" };
+                if (sub === "dm") return { antiDeleteTarget: "dm" };
                 return {};
             },
             5: () => {

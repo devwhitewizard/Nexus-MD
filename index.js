@@ -700,9 +700,17 @@ async function connectionLogic() {
         for (const m of upsert.messages) {
             if (!m.message) continue;
 
-            // Discard messages that were sent before the bot connected this session
-            const msgTime = m.messageTimestamp ? Number(m.messageTimestamp) : 0;
-            if (global.botStartTime && msgTime < global.botStartTime) {
+            // Discard old offline messages sent >60s before the bot connected this session
+            let msgTime = 0;
+            if (m.messageTimestamp) {
+                let raw = m.messageTimestamp;
+                if (typeof raw === "object" && raw !== null) {
+                    raw = raw.toNumber ? raw.toNumber() : (raw.low || 0);
+                }
+                msgTime = Number(raw || 0);
+                if (msgTime > 10000000000) msgTime = Math.floor(msgTime / 1000);
+            }
+            if (global.botStartTime && msgTime > 0 && msgTime < (global.botStartTime - 60)) {
                 console.log(`⏩ Skipping pre-startup message (${new Date(msgTime * 1000).toLocaleTimeString()})`);
                 continue;
             }
