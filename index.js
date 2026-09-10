@@ -157,8 +157,9 @@ async function connectionLogic() {
         sessionId = sessionId.replace(/\s+/g, "");
 
         const DUMMY_VALUES = ["none", "null", "undefined", "session_id_here", "your_session_id", "nexus~", "false", "0", "optional", "empty"];
-        if (!sessionId || sessionId.length < 20 || DUMMY_VALUES.includes(sessionId.toLowerCase())) {
-            console.log("ℹ️ Placeholder or invalid SESSION_ID detected. Ignoring SESSION_ID to allow QR/Pairing mode.");
+        const SAMPLE_KEY = "eyJub2lzZUtleSI6eyJwcml2YXRlIjp7InR5cGUiOiJCdWZmZXIiLCJkYXRhIjoiU0pUV0VlblZHNE55eElr";
+        if (!sessionId || sessionId.length < 20 || DUMMY_VALUES.includes(sessionId.toLowerCase()) || rawId.includes(SAMPLE_KEY)) {
+            console.log("ℹ️ Placeholder, sample, or invalid SESSION_ID detected. Ignoring SESSION_ID to allow QR/Pairing mode.");
             delete process.env.SESSION_ID;
         } else {
             console.log("📦 Initializing credentials from SESSION_ID environment variable...");
@@ -353,13 +354,38 @@ async function connectionLogic() {
         return await originalSendMessage(jid, msgPayload, options);
     };
 
+    global.latestPairingCode = null;
+    global.latestPairingNumber = pairingNum || null;
+
+    const sanitizePhoneNumber = (rawNum) => {
+        if (!rawNum) return "";
+        let clean = String(rawNum).replace(/[^0-9]/g, "");
+        if (clean.length > 15) clean = clean.slice(0, 15);
+        return clean;
+    };
+
     let pairingCodeRequested = false;
-    const requestAndPrintPairingCode = async (phone) => {
-        if (pairingCodeRequested || !phone) return;
+    const requestAndPrintPairingCode = async (phoneInput) => {
+        const cleanPhone = sanitizePhoneNumber(phoneInput);
+        if (!cleanPhone || cleanPhone.length < 7) {
+            console.error("❌ Invalid phone number format for pairing code:", phoneInput);
+            return null;
+        }
+
+        if (pairingCodeRequested && global.latestPairingCode) {
+            return global.latestPairingCode;
+        }
+
         pairingCodeRequested = true;
         try {
-            console.log(`📡 Requesting pairing code for +${phone}...`);
-            const code = await sock.requestPairingCode(phone);
+            console.log(`📡 Requesting pairing code for +${cleanPhone}...`);
+            if (!sock || typeof sock.requestPairingCode !== "function") {
+                throw new Error("WhatsApp socket connection not ready yet.");
+            }
+            const code = await sock.requestPairingCode(cleanPhone);
+            global.latestPairingCode = code;
+            global.latestPairingNumber = cleanPhone;
+
             console.clear();
             console.log("\n========================================");
             console.log("🔗 YOUR NEXUS-MD PAIRING CODE:");
@@ -368,11 +394,15 @@ async function connectionLogic() {
             console.log("1. Open WhatsApp on your phone.");
             console.log("2. Go to Linked Devices > Link with Phone Number.");
             console.log(`3. Enter the code shown above.\n`);
+            return code;
         } catch (err) {
             console.error("❌ Failed to generate pairing code:", err.message || err);
             pairingCodeRequested = false;
+            return null;
         }
     };
+
+    global.requestPairingCode = requestAndPrintPairingCode;
 
     // ⌚ WATCHDOG: If SESSION_ID is present but fails to connect within 60s, enable Pairing Code fallback.
     let connectionTimeout = null;
@@ -384,7 +414,7 @@ async function connectionLogic() {
                 if (pairingNum) {
                     await requestAndPrintPairingCode(pairingNum);
                 } else {
-                    console.log("⚠️ No phone number provided for pairing code. Defaulting to QR code.");
+                    console.log("⚠️ No phone number provided for pairing code. Defaulting to QR code or Web Auth.");
                 }
             }
         }, 60000);
@@ -404,19 +434,19 @@ async function connectionLogic() {
         if (qr) {
             global.latestQr = qr;
             if ((!process.env.SESSION_ID || process.env.SESSION_ID_FAILED) && !state.creds.registered) {
-                if (usePairingCode && pairingNum) {
-                    await requestAndPrintPairingCode(pairingNum);
+                const activePairingNum = pairingNum || global.latestPairingNumber;
+                if (usePairingCode && activePairingNum) {
+                    await requestAndPrintPairingCode(activePairingNum);
                 } else {
                     const appUrl = process.env.HEROKU_APP_NAME 
                         ? `https://${process.env.HEROKU_APP_NAME}.herokuapp.com/qr` 
                         : (process.env.APP_URL ? `${process.env.APP_URL.replace(/\/$/, "")}/qr` : `http://localhost:${PORT}/qr`);
                     console.clear();
-                    console.log("💡 QR Code too big, distorted, or hard to scan?");
-                    console.log(`👉 Open ${appUrl} in your web browser for a clean, high-res QR code!\n`);
+                    console.log("💡 Need Pairing Code or Web Login?");
+                    console.log(`👉 Open ${appUrl} in your web browser for high-res QR code or Pairing Code login!\n`);
                     console.log("📲 Scan this QR to login:\n");
                     qrcode.generate(qr, { small: true });
-                    console.log("\n💡 QR Code too big, distorted, or hard to scan?");
-                    console.log(`👉 Open ${appUrl} in your web browser for a clean, high-res QR code!\n`);
+                    console.log("\n💡 Open web browser at:", appUrl);
                 }
             }
         }
