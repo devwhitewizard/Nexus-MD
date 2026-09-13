@@ -63,8 +63,13 @@ module.exports = {
                 const { connection } = update;
                 
                 if (connection === "open") {
+                    // Small delay to let Baileys finalize cred writes (registered flag, keys, etc.)
+                    await new Promise(resolve => setTimeout(resolve, 2000));
                     const credsPath = path.join(tempSessionDir, "creds.json");
-                    const credsData = fs.readFileSync(credsPath, "utf-8");
+                    let credsObj = JSON.parse(fs.readFileSync(credsPath, "utf-8"));
+                    // Ensure registered=true so the SESSION_ID restore logic accepts it
+                    credsObj.registered = true;
+                    const credsData = JSON.stringify(credsObj);
                     const sessionId = "Nexus~" + Buffer.from(credsData).toString("base64");
 
                     await sock.sendMessage(jid, { 

@@ -127,17 +127,39 @@ async function connectionLogic() {
     // 📦 SESSION ID AUTO-RESTORE & DUMMY CHECK
     const credsPath = path.join(authFolder, "creds.json");
     let hasExistingValidSession = false;
+    let existingMeId = null;
     if (fs.existsSync(credsPath)) {
         try {
             const rawCreds = fs.readFileSync(credsPath, "utf-8");
             const parsed = JSON.parse(rawCreds);
             if (parsed && parsed.registered && (parsed.noiseKey || parsed.me)) {
                 hasExistingValidSession = true;
+                existingMeId = parsed.me?.id || null;
                 console.log("📦 Active live session found in session/creds.json. Preserving updated key ratchets.");
             }
         } catch (e) {
             console.log("⚠️ Existing creds.json is invalid or corrupted. Will restore from SESSION_ID...");
         }
+    }
+
+    // If SESSION_ID is provided and differs from the on-disk session (different account),
+    // force a restore from SESSION_ID even if creds.json looks valid
+    if (hasExistingValidSession && process.env.SESSION_ID && existingMeId) {
+        try {
+            let rawId = process.env.SESSION_ID.trim().replace(/^["']|["']$/g, "").trim();
+            let sessionPayload = rawId.includes("~") ? rawId.split("~").slice(1).join("~") : rawId;
+            sessionPayload = sessionPayload.replace(/\s+/g, "");
+            let safeB64 = sessionPayload.replace(/-/g, "+").replace(/_/g, "/");
+            while (safeB64.length % 4 !== 0) safeB64 += "=";
+            const decoded = Buffer.from(safeB64, "base64").toString("utf-8");
+            // Quick me.id comparison
+            const meMatch = decoded.match(/"id"\s*:\s*"([^"]+@s\.whatsapp\.net)"/);
+            const sessionMeId = meMatch ? meMatch[1] : null;
+            if (sessionMeId && sessionMeId !== existingMeId) {
+                console.log(`📦 SESSION_ID account (${sessionMeId}) differs from on-disk session (${existingMeId}). Forcing SESSION_ID restore...`);
+                hasExistingValidSession = false;
+            }
+        } catch (e) { /* ignore, keep existing session */ }
     }
 
     if (process.env.SESSION_ID_INVALID === "true") {
@@ -157,8 +179,13 @@ async function connectionLogic() {
         sessionId = sessionId.replace(/\s+/g, "");
 
         const DUMMY_VALUES = ["none", "null", "undefined", "session_id_here", "your_session_id", "nexus~", "false", "0", "optional", "empty"];
-        const SAMPLE_KEY = "eyJub2lzZUtleSI6eyJwcml2YXRlIjp7InR5cGUiOiJCdWZmZXIiLCJkYXRhIjoiU0pUV0VlblZHNE55eElr";
-        if (!sessionId || sessionId.length < 20 || DUMMY_VALUES.includes(sessionId.toLowerCase()) || rawId.includes(SAMPLE_KEY)) {
+        // Only reject the exact known placeholder/demo key — do NOT use .includes() on a prefix
+        // because all real Baileys sessions share the same noiseKey base64 prefix.
+        const EXACT_PLACEHOLDER_IDS = [
+            "eyJub2lzZUtleSI6eyJwcml2YXRlIjp7InR5cGUiOiJCdWZmZXIiLCJkYXRhIjoiU0pUV0VlblZHNE55eElrT1ROaXBNR0x5SlI1ZWwxemFIYzJJWUprbUNicFU9In0s"
+        ];
+        const isExactPlaceholder = EXACT_PLACEHOLDER_IDS.includes(sessionId);
+        if (!sessionId || sessionId.length < 20 || DUMMY_VALUES.includes(sessionId.toLowerCase()) || isExactPlaceholder) {
             console.log("ℹ️ Placeholder, sample, or invalid SESSION_ID detected. Ignoring SESSION_ID to allow QR/Pairing mode.");
             delete process.env.SESSION_ID;
         } else {
