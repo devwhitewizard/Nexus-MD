@@ -26,7 +26,7 @@ module.exports = {
             await sock.sendMessage(jid, { 
                 image: { url: video.thumbnail }, 
                 caption: `🎵 *Found:* ${video.title}\n⏱️ *Duration:* ${video.timestamp}\n\n⏳ *Processing audio for delivery...*`
-            }, { edit: waitMsg.key });
+            }, { quoted: msg });
 
 
             const audio = await mediaApi.ytDownload(video.url);

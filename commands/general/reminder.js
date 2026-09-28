@@ -62,15 +62,16 @@ module.exports = {
         // Fire the reminder
         setTimeout(async () => {
             try {
+                const senderNum = sender ? sender.split("@")[0].split(":")[0] : "User";
                 const reminderMsg =
                     `⏰ *REMINDER!*\n\n` +
-                    `📣 @${sender.split("@")[0]}, here's your reminder:\n\n` +
+                    `📣 @${senderNum}, here's your reminder:\n\n` +
                     `💬 *"${reminderText}"*\n\n` +
                     `_Set ${displayTime} ago • Nexus-1MD_`;
 
                 await sock.sendMessage(jid, {
                     text: reminderMsg,
-                    mentions: [sender]
+                    mentions: sender ? [sender] : []
                 });
             } catch (err) {
                 console.error("Reminder fire error:", err);

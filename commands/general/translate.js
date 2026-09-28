@@ -24,7 +24,7 @@ module.exports = {
             if (!data || !data[0]) return await sock.sendMessage(jid, { text: "❌ Translation failed." });
 
             // Extract translated text from Google's complex array response
-            const translation = data[0].map(item => item[0]).join("");
+            const translation = data[0].map(item => (item && item[0] ? item[0] : "")).join("");
 
             const translationText = `🌍 *TRANSLATION*\n━━━━━━━━━━━━━━━━━━━\n` +
                                     `*Original:* ${textToTranslate}\n` +

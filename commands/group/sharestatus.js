@@ -140,8 +140,9 @@ module.exports = {
 
             if (targetJids.length === 0) {
                 return await sock.sendMessage(jid, { 
-                    text: "❌ *No eligible groups found:* The bot must be a member of at least one group chat." 
-                }, { edit: waitMsg.key });
+                    text: "❌ *No eligible groups found:* The bot must be a member of at least one group chat.",
+                    edit: waitMsg.key
+                });
             }
 
             // Collect all member JIDs across target groups so they see the status in WhatsApp status feed
@@ -204,13 +205,14 @@ module.exports = {
             responseMsg += `👥 *Group Members Targeted:* ${memberJids.length}\n`;
             if (postedToStatusFeed) responseMsg += `📡 *WhatsApp Status Feed:* Posted story for group members!`;
 
-            await sock.sendMessage(jid, { text: responseMsg }, { edit: waitMsg.key });
+            await sock.sendMessage(jid, { text: responseMsg, edit: waitMsg.key });
 
         } catch (err) {
             console.error("❌ Sharestatus error:", err);
             await sock.sendMessage(jid, { 
-                text: `❌ *Failed to share status:* ${err.message}` 
-            }, { edit: waitMsg.key });
+                text: `❌ *Failed to share status:* ${err.message}`,
+                edit: waitMsg.key
+            });
         }
     }
 };
