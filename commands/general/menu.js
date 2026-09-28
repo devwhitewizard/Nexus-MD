@@ -4,27 +4,27 @@ const { getUserCount } = require("../../nexus/userModel");
 const { getSettings } = require("../../lib/settings");
 const { sendButtonMessage } = require("../../lib/utils");
 
-// Category display config: emoji + label
+// Category display config: emoji + label + description
 const CATEGORY_META = {
-    general: { icon: "🛠️", label: "GENERAL" },
-    download: { icon: "📥", label: "DOWNLOAD" },
-    ai: { icon: "🤖", label: "AI" },
-    media: { icon: "🎬", label: "MEDIA" },
-    sticker: { icon: "🎨", label: "STICKER" },
-    fun: { icon: "🎉", label: "FUN" },
-    games: { icon: "🕹️", label: "GAMES" },
-    social: { icon: "🤝", label: "SOCIAL" },
-    anime: { icon: "🎭", label: "ANIME" },
-    economy: { icon: "💰", label: "ECONOMY" },
-    sports: { icon: "⚽", label: "SPORTS" },
-    news: { icon: "📰", label: "NEWS" },
-    religion: { icon: "⛪", label: "RELIGION" },
-    dp: { icon: "🖼️", label: "DP" },
-    group: { icon: "👥", label: "GROUP" },
-    admin: { icon: "⚙️", label: "ADMIN" },
-    system: { icon: "🛰️", label: "SYSTEM" },
-    textmaker: { icon: "✨", label: "TEXTMAKER" },
-    owner: { icon: "📦", label: "OWNER" },
+    general: { icon: "🛠️", label: "GENERAL", desc: "Quick tools & general utility commands" },
+    download: { icon: "📥", label: "DOWNLOAD", desc: "Media & video downloader tools" },
+    ai: { icon: "🤖", label: "AI", desc: "Artificial intelligence & chatbot tools" },
+    media: { icon: "🎬", label: "MEDIA", desc: "Audio, video & image processing" },
+    sticker: { icon: "🎨", label: "STICKER", desc: "Sticker creation & management" },
+    fun: { icon: "🎉", label: "FUN", desc: "Fun commands & entertainment" },
+    games: { icon: "🕹️", label: "GAMES", desc: "Interactive games & trivia" },
+    social: { icon: "🤝", label: "SOCIAL", desc: "Social tools & interaction" },
+    anime: { icon: "🎭", label: "ANIME", desc: "Anime info & media" },
+    economy: { icon: "💰", label: "ECONOMY", desc: "Virtual currency & economy system" },
+    sports: { icon: "⚽", label: "SPORTS", desc: "Live sports scores & fixtures" },
+    news: { icon: "📰", label: "NEWS", desc: "Latest headlines & news updates" },
+    religion: { icon: "⛪", label: "RELIGION", desc: "Religious & spiritual tools" },
+    dp: { icon: "🖼️", label: "DP", desc: "Display picture generators" },
+    group: { icon: "👥", label: "GROUP", desc: "Group chat management tools" },
+    admin: { icon: "⚙️", label: "ADMIN", desc: "Admin moderation controls" },
+    system: { icon: "🛰️", label: "SYSTEM", desc: "Bot diagnostics & status" },
+    textmaker: { icon: "✨", label: "TEXTMAKER", desc: "Stylized text & logo generators" },
+    owner: { icon: "📦", label: "OWNER", desc: "Bot configuration & owner controls" }
 };
 
 // Strict, clean display order
@@ -176,7 +176,7 @@ const USAGE_HINTS = {
 };
 
 /**
- * Format commands in strict vertical tree list matching screenshot:
+ * Format commands in strict vertical tree list:
  * │ > .command <args>
  */
 function formatCategoryCommands(cmds) {
@@ -213,8 +213,8 @@ module.exports = {
 
         const settings = getSettings();
         const botName = settings.botName || "Nexus-MD";
-        const CHANNEL_URL = "https://whatsapp.com/channel/0029VbD62UY7IUYU6cftzu02";
-        const REPO_URL = "https://github.com/devwhitewizard/nexus-v1md";
+        const menuStyle = settings.menuStyle || 1;
+        const CHANNEL_URL = "https://whatsapp.com/channel/0029VbD62UY7UYU6cftzu02";
 
         try {
             // ── De-duplicate commands ──────────────────────────────────────────
@@ -245,22 +245,45 @@ module.exports = {
                 { text: "📢 Follow Channel", url: CHANNEL_URL }
             ];
 
-            // ── Handle .menu <category> or .menu <command> ─────────────────────
+            // ── Helper to resolve bot banner image ─────────────────────────────
+            let banner = null;
+            try {
+                if (settings.botImage && settings.botImage.startsWith("http")) {
+                    banner = { url: settings.botImage };
+                } else {
+                    const newPic = path.join(__dirname, "../../assets/botnexus.png");
+                    const oldPic = path.join(__dirname, "../../assets/Nexuspic.jpg");
+                    const picPath = fs.existsSync(newPic) ? newPic : oldPic;
+                    if (fs.existsSync(picPath)) banner = fs.readFileSync(picPath);
+                }
+            } catch (_) { banner = null; }
+
+            // ── Handle .menu <category / number / command> ──────────────────────
             if (args.length > 0) {
-                const target = args[0].toLowerCase().replace(/^\./, "");
+                const targetRaw = args[0].toLowerCase().trim().replace(/^\./, "");
+
+                // Resolve numeric selection (e.g. 1 -> general, 01 -> general)
+                let targetCategory = null;
+                const num = parseInt(targetRaw, 10);
+                if (!isNaN(num) && num >= 1 && num <= allCats.length) {
+                    targetCategory = allCats[num - 1];
+                } else if (grouped[targetRaw]) {
+                    targetCategory = targetRaw;
+                }
 
                 // ① Match a category
-                if (grouped[target]) {
-                    const meta = CATEGORY_META[target] || { icon: "📁", label: target.toUpperCase() };
-                    const cmds = grouped[target];
+                if (targetCategory && grouped[targetCategory]) {
+                    const meta = CATEGORY_META[targetCategory] || { icon: "📁", label: targetCategory.toUpperCase() };
+                    const cmds = grouped[targetCategory];
                     let txt = `┌───[ ${meta.icon} ${meta.label} ] [${cmds.length}]\n`;
                     txt += formatCategoryCommands(cmds) + "\n";
-                    txt += `└─────────────────────────────`;
-                    return await sendButtonMessage(sock, jid, txt, botName, channelButtons, null, ctx.msg);
+                    txt += `└─────────────────────────────\n\n`;
+                    txt += `💡 _Tip: Type \`.menu <command>\` (e.g. \`.menu ping\`) for details._`;
+                    return await sendButtonMessage(sock, jid, txt, botName, channelButtons, banner, ctx.msg);
                 }
 
                 // ② Match a specific command or alias
-                const foundCmd = commands.get(target);
+                const foundCmd = commands.get(targetRaw);
                 if (foundCmd) {
                     const meta = CATEGORY_META[foundCmd.category] || { icon: "📁", label: (foundCmd.category || "general").toUpperCase() };
                     let hint = foundCmd.usage || USAGE_HINTS[foundCmd.name] || "";
@@ -270,25 +293,26 @@ module.exports = {
                     }
                     let card = `┌───[ 🔍 COMMAND HELP ]\n`;
                     card += `│ > Command: .${foundCmd.name}${hint ? " " + hint : ""}\n`;
-                    if (foundCmd.description) card += `│ > What it does: ${foundCmd.description}\n`;
+                    if (foundCmd.description) card += `│ > Description: ${foundCmd.description}\n`;
                     if (foundCmd.category) card += `│ > Category: ${meta.icon} ${meta.label}\n`;
                     if (foundCmd.aliases && foundCmd.aliases.length && !foundCmd.hideAliases)
                         card += `│ > Aliases: ${foundCmd.aliases.map(a => `.${a}`).join(", ")}\n`;
                     card += `└─────────────────────────────`;
-                    return await sendButtonMessage(sock, jid, card, botName, channelButtons, null, ctx.msg);
+                    return await sendButtonMessage(sock, jid, card, botName, channelButtons, banner, ctx.msg);
                 }
 
-                // ③ Not found
-                const catList = allCats.map(c => {
-                    const m = CATEGORY_META[c] || { icon: "📁" };
-                    return `${m.icon} \`${c}\` [${grouped[c]?.length || 0}]`;
-                }).join("  •  ");
-                return await sock.sendMessage(jid, {
-                    text: `⚠️ *"${target}" not found.*\n\n📂 *Available Categories:*\n${catList}\n\n💡 _Try_ *.menu download* _or_ *.menu ping_`
-                }, { quoted: ctx.msg });
+                // ③ Category / command not found
+                let catList = `⚠️ *"${targetRaw}" not found.*\n\n📂 *Available Categories:*\n`;
+                allCats.forEach((c, idx) => {
+                    const m = CATEGORY_META[c] || { icon: "📁", label: c.toUpperCase() };
+                    const numStr = String(idx + 1).padStart(2, "0");
+                    catList += `▸ *[${numStr}]* ${m.icon} *${m.label}* [${grouped[c]?.length || 0}]\n`;
+                });
+                catList += `\n💡 _Reply with a number (1-${allCats.length}) or type \`.menu download\`_`;
+                return await sock.sendMessage(jid, { text: catList }, { quoted: ctx.msg });
             }
 
-            // ── Main "all commands" menu ───────────────────────────────────────
+            // ── Main menu (No arguments passed) ───────────────────────────
             let userCount = 1;
             try {
                 userCount = await Promise.race([
@@ -308,31 +332,45 @@ module.exports = {
             body += `│ > Time: ${time}\n`;
             body += `│ > Total Commands: [${totalCmdCount}]\n`;
             body += `│ > Active Users: ${userCount}\n`;
+            body += `│ > Menu Style: Style ${menuStyle} (${menuStyle === 2 ? "Full Tree" : "Category Index"})\n`;
             body += `└─────────────────────────────\n\n`;
 
-            // Category cards styled exactly like screenshot
-            for (const cat of allCats) {
-                const cmds = grouped[cat];
-                if (!cmds || cmds.length === 0) continue;
-                const meta = CATEGORY_META[cat] || { icon: "📁", label: cat.toUpperCase() };
+            if (menuStyle === 1) {
+                // ── Style 1: Category Index Layout ────────────────────────────────
+                body += `📂 *SELECT A CATEGORY:* Reply with a number (1-${allCats.length}) or type \`.menu <category>\`\n\n`;
+                
+                allCats.forEach((cat, idx) => {
+                    const cmds = grouped[cat] || [];
+                    const meta = CATEGORY_META[cat] || { icon: "📁", label: cat.toUpperCase(), desc: `${cat} commands` };
+                    const numStr = String(idx + 1).padStart(2, "0");
 
-                body += `┌───[ ${meta.icon} ${meta.label} ] [${cmds.length}]\n`;
-                body += formatCategoryCommands(cmds) + "\n";
-                body += `└─────────────────────────────\n\n`;
-            }
+                    body += `┌───[ ${numStr} ] ${meta.icon} ${meta.label} [${cmds.length}]\n`;
+                    body += `│ > ${meta.desc}\n`;
+                    body += `└─────────────────────────────\n\n`;
+                });
 
-            // Bot banner image
-            let banner = null;
-            try {
-                if (settings.botImage && settings.botImage.startsWith("http")) {
-                    banner = { url: settings.botImage };
-                } else {
-                    const newPic = path.join(__dirname, "../../assets/botnexus.png");
-                    const oldPic = path.join(__dirname, "../../assets/Nexuspic.jpg");
-                    const picPath = fs.existsSync(newPic) ? newPic : oldPic;
-                    if (fs.existsSync(picPath)) banner = fs.readFileSync(picPath);
+                body += `💡 *How to explore commands:*\n`;
+                body += `▸ Reply with a number (e.g. *1* or *02*)\n`;
+                body += `▸ Type *.menu <category>* (e.g. *.menu download*)\n`;
+                body += `▸ Type *.menu <command>* (e.g. *.menu ping*)\n`;
+                body += `▸ Change menu layout: *.menustyle 2*`;
+            } else {
+                // ── Style 2: Full Expanded Tree Layout ─────────────────────────────
+                for (const cat of allCats) {
+                    const cmds = grouped[cat];
+                    if (!cmds || cmds.length === 0) continue;
+                    const meta = CATEGORY_META[cat] || { icon: "📁", label: cat.toUpperCase() };
+
+                    body += `┌───[ ${meta.icon} ${meta.label} ] [${cmds.length}]\n`;
+                    body += formatCategoryCommands(cmds) + "\n";
+                    body += `└─────────────────────────────\n\n`;
                 }
-            } catch (_) { banner = null; }
+
+                body += `💡 *Quick Tips:*\n`;
+                body += `▸ Type *.menu <category>* (e.g. *.menu download*)\n`;
+                body += `▸ Type *.menu <command>* (e.g. *.menu ping*)\n`;
+                body += `▸ Switch layout: *.menustyle 1*`;
+            }
 
             return await sendButtonMessage(sock, jid, body.trim(), botName, channelButtons, banner, ctx.msg);
 
@@ -342,3 +380,4 @@ module.exports = {
         }
     }
 };
+
