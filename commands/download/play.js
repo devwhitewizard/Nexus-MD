@@ -41,8 +41,8 @@ module.exports = {
                 await sock.sendPresenceUpdate('recording', jid);
                 await sock.sendMessage(jid, { 
                     audio: audio.buffer,
-                    mimetype: "audio/mpeg",
-                    fileName: `${audio.title || video.title}.mp3`,
+                    mimetype: audio.mimetype || "audio/mp4",
+                    fileName: `${audio.title || video.title}.m4a`,
                     ptt: false
                 }, { quoted: msg });
                 await sock.sendMessage(jid, { text: `✅ *Done:* ${audio.title || video.title}` }, { quoted: msg });

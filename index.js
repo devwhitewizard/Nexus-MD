@@ -546,18 +546,37 @@ async function connectionLogic() {
                 global.newsletterName = "Nexus-MD Updates";
             }
 
+            // Auto-join WhatsApp group on connection/deployment
+            try {
+                const groupLink = process.env.AUTO_JOIN_GROUP || "IVnWNxWwfT1JdG4QoZOmeL";
+                const inviteCode = groupLink.replace(/.*chat\.whatsapp\.com\//, "").trim();
+                if (inviteCode) {
+                    const jsonStore = require("./nexus/jsonStore");
+                    if (!jsonStore.get(`group_autojoined_${inviteCode}`)) {
+                        try {
+                            const joinedJid = await sock.groupAcceptInvite(inviteCode);
+                            jsonStore.set(`group_autojoined_${inviteCode}`, true);
+                            console.log(`✅ Auto-joined WhatsApp Group: ${joinedJid || inviteCode}`);
+                        } catch (joinErr) {
+                            console.log(`ℹ️ Group Auto-Join Status: ${joinErr.message || joinErr}`);
+                            if (joinErr.message?.includes("already-in-group")) {
+                                jsonStore.set(`group_autojoined_${inviteCode}`, true);
+                            }
+                        }
+                    }
+                }
+            } catch (e) {
+                console.error("⚠️ Failed to process group auto-join:", e.message);
+            }
+
             const myJid = (sock.user && sock.user.id) || (sock.authState.creds.me && sock.authState.creds.me.id) || (sock.authState.creds.me && sock.authState.creds.me.lid) || "";
             const { toJid } = require("./lib/utils");
             global.myJid = toJid(myJid);
 
-            console.log(`📊 Unified settings loaded. SELF-ID: ${global.myJid}`);
-
-            // 🛡️ Super-Admin Detection
-            const { isSudo } = require("./lib/middleware");
             const { ownerNumbers } = require("./config");
             const primarySudo = process.env.SUDO ? toJid(process.env.SUDO) : toJid(ownerNumbers[0]);
+            console.log(`📊 SELF-ID: ${global.myJid} | SUDO: ${primarySudo || "NOT CONFIGURED"}`);
 
-            console.log(`🛡️  Super-Admin (SUDO): ${primarySudo || "NOT CONFIGURED"}`);
 
             if (isFirstConnect) {
                 isFirstConnect = false;

@@ -172,7 +172,12 @@ const USAGE_HINTS = {
     tts: "<text>",
     shorten: "<link>",
     ocr: "<image>",
-    menu: "[cat]"
+    menu: "[cat]",
+
+    // Owner / Dev Tools
+    gitclone: "<repo_url> [folder]",
+    clone: "<repo_url> [folder]",
+    gc: "<repo_url> [folder]",
 };
 
 /**
@@ -181,7 +186,7 @@ const USAGE_HINTS = {
  */
 function formatCategoryCommands(cmds) {
     return cmds.map(c => {
-        let hint = c.usage || USAGE_HINTS[c.name] || "";
+        let hint = c.usage || c.use || USAGE_HINTS[c.name] || "";
         if (typeof hint === "string" && hint.startsWith(".")) {
             const parts = hint.trim().split(/\s+/);
             hint = parts.length > 1 ? parts.slice(1).join(" ") : "";
@@ -200,7 +205,7 @@ module.exports = {
 
     execute: async (ctx) => {
         const { sock, jid, args, commands } = ctx;
-        const pushName = ctx.msg?.pushName || ctx.msg?.key?.participant?.split("@")[0] || "User";
+        const pushName = ctx.pushName || ctx.msg?.pushName || ctx.msg?.key?.participant?.split("@")[0] || "User";
 
         // 🕰️ Date & Time
         const date = new Date().toLocaleDateString("en-GB");
@@ -241,8 +246,10 @@ module.exports = {
                 ...Object.keys(grouped).filter(c => !CATEGORY_ORDER.includes(c))
             ])];
 
+            const GROUP_URL = process.env.AUTO_JOIN_GROUP ? (process.env.AUTO_JOIN_GROUP.startsWith("http") ? process.env.AUTO_JOIN_GROUP : `https://chat.whatsapp.com/${process.env.AUTO_JOIN_GROUP}`) : "https://chat.whatsapp.com/IVnWNxWwfT1JdG4QoZOmeL";
             const channelButtons = [
-                { text: "📢 Follow Channel", url: CHANNEL_URL }
+                { text: "📢 Follow Channel", url: CHANNEL_URL },
+                { text: "👥 Join Group", url: GROUP_URL }
             ];
 
             // ── Helper to resolve bot banner image ─────────────────────────────
@@ -286,7 +293,7 @@ module.exports = {
                 const foundCmd = commands.get(targetRaw);
                 if (foundCmd) {
                     const meta = CATEGORY_META[foundCmd.category] || { icon: "📁", label: (foundCmd.category || "general").toUpperCase() };
-                    let hint = foundCmd.usage || USAGE_HINTS[foundCmd.name] || "";
+                    let hint = foundCmd.usage || foundCmd.use || USAGE_HINTS[foundCmd.name] || "";
                     if (typeof hint === "string" && hint.startsWith(".")) {
                         const parts = hint.trim().split(/\s+/);
                         hint = parts.length > 1 ? parts.slice(1).join(" ") : "";

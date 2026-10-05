@@ -7,17 +7,10 @@ const dbUrl = process.env.DATABASE_URL;
 let isDatabaseOnline = false;
 let sequelize = null;
 
-const dbLog = (sql, duration) => {
-    if (duration > 50) {
-        console.warn(`🐢 [DB SLOW QUERY] (${duration}ms): ${sql}`);
-    }
-};
-
 if (dbUrl) {
     // ☁️ Cloud database (PostgreSQL / MySQL on Heroku, Railway, etc.)
     sequelize = new Sequelize(dbUrl, {
-        benchmark: true,
-        logging: dbLog,
+        logging: false,
         dialectOptions: {
             ssl: { require: true, rejectUnauthorized: false },
             connectTimeout: 5000
@@ -41,8 +34,7 @@ if (dbUrl) {
             sequelize = new Sequelize({
                 dialect: "sqlite",
                 storage: dbPath,
-                benchmark: true,
-                logging: dbLog,
+                logging: false,
                 dialectOptions: {
                     mode: null
                 },
@@ -76,13 +68,10 @@ const initDb = async () => {
             await sequelize.query("PRAGMA journal_mode=WAL;").catch(() => {});
             await sequelize.query("PRAGMA synchronous=NORMAL;").catch(() => {});
             await sequelize.query("PRAGMA cache_size=-16000;").catch(() => {}); // 16MB page cache
-            console.log("🗄️ SQLite database ready (WAL mode enabled).");
-        } else {
-            console.log("🗄️ Cloud database connected successfully.");
         }
 
         await sequelize.sync({ alter: true });
-        console.log("✅ Database models synchronized.");
+        console.log("✅ Database OK");
         isDatabaseOnline = true;
     } catch (error) {
         console.error("❌ Database initialization failed (falling back to JSON store):", error.message);
