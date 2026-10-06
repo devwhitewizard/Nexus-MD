@@ -1,81 +1,118 @@
-const { spawn } = require('child_process');
+const axios = require('axios');
+const fs = require('fs');
 const path = require('path');
+const os = require('os');
+const { execSync } = require('child_process');
 
 module.exports = {
     name: "gitclone",
-    aliases: ["clone", "gc"],
-    description: "Clone a GitHub/Git repository to the bot's directory.",
+    aliases: ["clone", "gc", "github"],
+    description: "Download a GitHub/Git repository and send it to WhatsApp as a ZIP document.",
     category: "owner",
     isOwnerOnly: true,
-    cooldown: 30000,
+    cooldown: 15000,
     async execute({ sock, jid, args, msg }) {
-        const repoUrl = args[0];
-        const customDir = args[1]; // optional folder name
+        let input = args[0];
 
-        if (!repoUrl) {
+        if (!input) {
             return await sock.sendMessage(jid, {
-                text: `📦 *Git Clone Command*\n\n*Usage:* \`.gitclone <repo_url> [folder_name]\`\n\n*Examples:*\n\`.gitclone https://github.com/user/repo\`\n\`.gitclone https://github.com/user/repo my-folder\`\n\n_Only GitHub and public Git URLs are supported._`
+                text: `📦 *Git Clone / GitHub Downloader*\n\n*Usage:* \`.gitclone <github_url_or_repo>\`\n\n*Examples:*\n\`.gitclone https://github.com/user/repo\`\n\`.gitclone user/repo\`\n\n_Clones the repo and sends it directly to WhatsApp as a .zip document!_`
             }, { quoted: msg });
         }
 
-        // Basic URL validation
-        if (!repoUrl.startsWith('http://') && !repoUrl.startsWith('https://') && !repoUrl.startsWith('git@')) {
-            return await sock.sendMessage(jid, {
-                text: `❌ *Invalid URL.*\nMust start with \`https://\`, \`http://\`, or \`git@\``
-            }, { quoted: msg });
+        input = input.trim();
+        let owner = '';
+        let repo = '';
+
+        // Match github url or user/repo format
+        const ghMatch = input.match(/(?:https?:\/\/github\.com\/|git@github\.com:)?([a-zA-Z0-9_.-]+)\/([a-zA-Z0-9_.-]+)/);
+        if (ghMatch) {
+            owner = ghMatch[1];
+            repo = ghMatch[2].replace(/\.git$/, '');
         }
 
-        // Derive the folder name
-        const folderName = customDir || path.basename(repoUrl.replace(/\.git$/, ''));
+        const repoName = repo || path.basename(input.replace(/\.git$/, '')) || 'repository';
 
-        // Send initial status
-        const waitMsg = await sock.sendMessage(jid, {
-            text: `⏳ *Cloning repository...*\n\n🔗 *URL:* ${repoUrl}\n📁 *Folder:* \`${folderName}\`\n\n_Please wait..._`
+        await sock.sendMessage(jid, {
+            text: `⏳ *Fetching repository: \`${repoName}\`...*\n\n_Please wait while the repository is downloaded and sent to WhatsApp..._`
         }, { quoted: msg });
 
-        const cloneArgs = ['clone', repoUrl];
-        if (customDir) cloneArgs.push(customDir);
+        let zipBuffer = null;
 
-        // Run git clone
-        let output = '';
-        let errOutput = '';
+        // Strategy 1: Try GitHub API Zipball (Fastest, works cross-platform without local git/zip dependencies)
+        if (owner && repo) {
+            try {
+                const zipUrl = `https://api.github.com/repos/${owner}/${repo}/zipball`;
+                const res = await axios.get(zipUrl, {
+                    responseType: 'arraybuffer',
+                    headers: {
+                        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+                    },
+                    timeout: 60000,
+                    maxRedirects: 5
+                });
 
-        const gitProcess = spawn('git', cloneArgs, {
-            cwd: process.cwd(),
-            shell: true
-        });
-
-        gitProcess.stdout.on('data', data => { output += data.toString(); });
-        gitProcess.stderr.on('data', data => { errOutput += data.toString(); }); // git uses stderr for progress too
-
-        gitProcess.on('close', async (code) => {
-            // git clone progress goes to stderr even on success — combine both
-            const fullOutput = (output + errOutput).trim();
-            const lines = fullOutput.split('\n').filter(Boolean);
-            const preview = lines.slice(-6).join('\n'); // last 6 lines
-
-            if (code === 0) {
-                await sock.sendMessage(jid, {
-                    text: `✅ *Clone Successful!*\n\n📁 *Folder:* \`${folderName}\`\n📍 *Location:* \`${process.cwd()}/${folderName}\`\n\n\`\`\`\n${preview || 'Done.'}\n\`\`\``
-                }, { quoted: msg });
-            } else {
-                // Extract meaningful error
-                const errorLine = lines.find(l =>
-                    l.toLowerCase().includes('error') ||
-                    l.toLowerCase().includes('fatal') ||
-                    l.toLowerCase().includes('not found')
-                ) || lines[lines.length - 1] || 'Unknown error';
-
-                await sock.sendMessage(jid, {
-                    text: `❌ *Clone Failed!*\n\n*Reason:* ${errorLine}\n\n\`\`\`\n${preview || errOutput.trim().slice(0, 300)}\n\`\`\``
-                }, { quoted: msg });
+                if (res.data && res.data.length > 0) {
+                    zipBuffer = Buffer.from(res.data);
+                }
+            } catch (err) {
+                console.log(`[gitclone] Direct GitHub zip download failed (${err.message}). Falling back to git clone...`);
             }
-        });
+        }
 
-        gitProcess.on('error', async (err) => {
-            await sock.sendMessage(jid, {
-                text: `❌ *Failed to start git:* ${err.message}\n\n_Make sure \`git\` is installed on the system._`
+        // Strategy 2: Fallback to local git clone + zipping if direct download failed or non-GitHub URL
+        if (!zipBuffer) {
+            const tempDir = path.join(os.tmpdir(), `gitclone-${Date.now()}`);
+            const zipPath = path.join(os.tmpdir(), `${repoName}-${Date.now()}.zip`);
+
+            try {
+                const cloneUrl = input.startsWith('http') || input.startsWith('git@') ? input : `https://github.com/${owner}/${repo}.git`;
+
+                // Clone repo into temp dir with depth 1
+                execSync(`git clone --depth 1 "${cloneUrl}" "${tempDir}"`, { stdio: 'pipe' });
+
+                // Zip the temporary folder based on OS
+                if (process.platform === 'win32') {
+                    execSync(`powershell -Command "Compress-Archive -Path '${tempDir}\\*' -DestinationPath '${zipPath}' -Force"`, { stdio: 'pipe' });
+                } else {
+                    execSync(`cd "${tempDir}" && zip -r "${zipPath}" .`, { stdio: 'pipe' });
+                }
+
+                if (fs.existsSync(zipPath)) {
+                    zipBuffer = fs.readFileSync(zipPath);
+                }
+            } catch (cloneErr) {
+                return await sock.sendMessage(jid, {
+                    text: `❌ *Failed to clone/download repository.*\n\n*Error:* ${cloneErr.message}`
+                }, { quoted: msg });
+            } finally {
+                // Clean up temporary files
+                if (fs.existsSync(tempDir)) fs.rmSync(tempDir, { recursive: true, force: true });
+                if (fs.existsSync(zipPath)) fs.rmSync(zipPath, { recursive: true, force: true });
+            }
+        }
+
+        if (!zipBuffer || zipBuffer.length === 0) {
+            return await sock.sendMessage(jid, {
+                text: `❌ *Could not download repository content.*`
             }, { quoted: msg });
-        });
+        }
+
+        // Check buffer size (WhatsApp document limit ~100MB)
+        const sizeMB = (zipBuffer.length / (1024 * 1024)).toFixed(2);
+        if (zipBuffer.length > 100 * 1024 * 1024) {
+            return await sock.sendMessage(jid, {
+                text: `⚠️ *Repository ZIP is too large for WhatsApp.* (${sizeMB} MB). Max allowed is 100MB.`
+            }, { quoted: msg });
+        }
+
+        // Send ZIP document to WhatsApp chat
+        await sock.sendMessage(jid, {
+            document: zipBuffer,
+            fileName: `${repoName}.zip`,
+            mimetype: 'application/zip',
+            caption: `📦 *GitHub Repository Downloaded*\n\n📁 *File:* \`${repoName}.zip\`\n📊 *Size:* \`${sizeMB} MB\`\n🔗 *URL:* ${input}`
+        }, { quoted: msg });
     }
 };
+
