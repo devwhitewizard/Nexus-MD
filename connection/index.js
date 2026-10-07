@@ -12,6 +12,14 @@ let isFirstConnect = true;
 let isReconnecting = false;
 let hasWipedSessionOnStartup = false;
 
+// ── Connection Readiness & Pending Message Queue ─────────────────────────────
+// During startup, Baileys may emit messages.upsert before connection.update
+// fires with connection === "open". This queue ensures no messages are lost
+// during that transition. The queue is bounded to prevent memory growth.
+let isConnectionReady = false;
+const pendingMessageQueue = [];
+const MAX_PENDING_MESSAGES = 50;
+
 /**
  * Initializes and manages WhatsApp connection lifecycle.
  */
@@ -127,6 +135,40 @@ async function startConnection() {
             global.botStartTime = Math.floor(Date.now() / 1000);
             console.log("✅ Bot connected and stable!");
 
+            // Mark connection as ready and process any queued messages
+            isConnectionReady = true;
+            if (pendingMessageQueue.length > 0) {
+                console.log(`📨 [STARTUP] Processing ${pendingMessageQueue.length} queued message(s)...`);
+                const queued = pendingMessageQueue.splice(0);
+                for (const upsert of queued) {
+                    try {
+                        for (const m of upsert.messages) {
+                            if (!m.message) continue;
+                            let msgTime = 0;
+                            if (m.messageTimestamp) {
+                                let raw = m.messageTimestamp;
+                                if (typeof raw === "object" && raw !== null) {
+                                    raw = raw.toNumber ? raw.toNumber() : (raw.low || 0);
+                                }
+                                msgTime = Number(raw || 0);
+                                if (msgTime > 10000000000) msgTime = Math.floor(msgTime / 1000);
+                            }
+                            if (global.botStartTime && msgTime > 0 && msgTime < (global.botStartTime - 60)) {
+                                continue;
+                            }
+                            logMessageCard(m);
+                        }
+                        const m = upsert.messages[0];
+                        if (m && m.message) {
+                            handleAutomation(sock, m).catch(err => console.error("⚠️ Automation Error:", err));
+                            await handleMessages(sock, upsert);
+                        }
+                    } catch (e) {
+                        console.error("⚠️ [STARTUP] Error processing queued message:", e.message);
+                    }
+                }
+            }
+
             // Notify reconnect manager — resets retry counter, clears any pending timer
             reconnect.notifyConnected();
 
@@ -220,6 +262,7 @@ async function startConnection() {
             if (global.alwaysOnlineInterval) clearInterval(global.alwaysOnlineInterval);
 
             global.isSockConnected = false;
+            isConnectionReady = false;
             const { classifyDisconnect, CATEGORIES } = require("./disconnect");
             const classification = classifyDisconnect(lastDisconnect);
             console.log(`🔌 [DISCONNECT] ${classification.reasonText} (Category: ${classification.category})`);
@@ -231,6 +274,12 @@ async function startConnection() {
                 // avoid importing it at module top (keeps imports clean).
                 console.log("⚠️ [AUTH] Account unlinked or session logged out. Requesting fresh QR/Pairing login...");
                 process.env.SESSION_ID_INVALID = "true";
+
+                // Clear pending startup queue — stale messages should not replay after auth wipe
+                if (pendingMessageQueue.length > 0) {
+                    console.log(`🧹 [AUTH] Clearing ${pendingMessageQueue.length} queued message(s) due to auth invalidation.`);
+                    pendingMessageQueue.length = 0;
+                }
 
                 // Halt the reconnect manager before wiping — prevents storm during wipe
                 reconnect.stopReconnect();
@@ -260,6 +309,14 @@ async function startConnection() {
 
     sock.ev.on("messages.upsert", async (upsert) => {
         if (upsert.type !== "notify") return;
+
+        // If connection is not yet ready, queue the message for later processing
+        if (!isConnectionReady) {
+            if (pendingMessageQueue.length < MAX_PENDING_MESSAGES) {
+                pendingMessageQueue.push(upsert);
+            }
+            return;
+        }
 
         for (const m of upsert.messages) {
             if (!m.message) continue;

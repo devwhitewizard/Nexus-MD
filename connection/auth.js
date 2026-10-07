@@ -140,11 +140,12 @@ const { bootstrapSession } = require("./session");
  * This is the single authoritative entry point for choosing the auth backend.
  *
  * Backend selection order:
- *   1. If DATABASE_URL is set and DB is available → use DB-backed auth (dbAuth.js)
+ *   1. If AUTH_MODE=db → use DB-backed auth (dbAuth.js)
  *   2. Otherwise → use filesystem auth (useMultiFileAuthState)
  *
- * DB auth is only attempted when DATABASE_URL is explicitly configured,
- * preserving existing filesystem behavior for all other deployments.
+ * DB auth is ONLY activated by the explicit AUTH_MODE=db opt-in.
+ * DATABASE_URL alone does NOT enable DB-backed Baileys auth — it is the
+ * bot's normal application database and has no effect on auth backend selection.
  *
  * @param {string} authFolder - Directory for session files
  */
@@ -152,26 +153,34 @@ async function initAuthState(authFolder) {
     // Bootstrap credentials from SESSION_ID if no valid on-disk session exists
     bootstrapSession(authFolder);
 
-    // Attempt DB-backed auth first (only when DATABASE_URL is configured)
-    if (process.env.DATABASE_URL) {
+    // Attempt DB-backed auth ONLY when explicitly requested via AUTH_MODE=db
+    const authMode = (process.env.AUTH_MODE || "").trim().toLowerCase();
+    if (authMode === "db") {
         try {
             const { useDatabaseAuthState } = require("../nexus/dbAuth");
             const dbAuth = await useDatabaseAuthState(authFolder);
             if (dbAuth) {
-                console.log("💾 [AUTH] Using database-backed authentication.");
+                console.log("💾 [AUTH] AUTH_MODE=db — using database-backed authentication.");
                 return {
                     state: dbAuth.state,
                     saveCreds: dbAuth.saveCreds,
                     syncSessionIdToEnv: () => syncSessionIdToEnv(authFolder)
                 };
             }
-            console.log("ℹ️ [AUTH] Database auth unavailable. Falling back to filesystem auth.");
+            // AUTH_MODE=db was explicitly requested but DB auth is unavailable.
+            // Fail clearly rather than silently falling back to filesystem.
+            throw new Error(
+                "AUTH_MODE=db is set but database-backed auth is unavailable. " +
+                "Ensure DATABASE_URL is configured and the database is reachable. " +
+                "Remove AUTH_MODE=db to use filesystem auth."
+            );
         } catch (e) {
-            console.error("⚠️ [AUTH] Database auth error. Falling back to filesystem auth:", e.message);
+            console.error("❌ [AUTH] Database auth initialization failed:", e.message);
+            throw e;
         }
     }
 
-    // Filesystem auth (default / fallback)
+    // Filesystem auth (default when AUTH_MODE is absent, empty, or not "db")
     let { state, saveCreds } = await useMultiFileAuthState(authFolder);
 
     return {

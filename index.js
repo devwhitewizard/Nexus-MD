@@ -122,4 +122,11 @@ app.listen(PORT, () => {
 // All auth, session, socket, disconnect, and reconnect logic lives in connection/.
 // This is the only place startConnection() is called from application code.
 const { startConnection } = require("./connection");
-startConnection();
+
+// Export the entrypoint for programmatic use (e.g., require("nexus-md")())
+module.exports = startConnection;
+
+// Auto-start only when executed directly (node index.js), not when required as a module
+if (require.main === module) {
+    startConnection();
+}
