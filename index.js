@@ -1,6 +1,31 @@
+/**
+ * index.js — Application Bootstrap
+ *
+ * Responsibilities (this file only):
+ *   1. Load environment variables (.env / config.env).
+ *   2. Install the log-noise filter for Baileys/libsignal internals.
+ *   3. Register global exception handlers to prevent crash on non-fatal errors.
+ *   4. Start the Express health/admin server.
+ *   5. Delegate ALL WhatsApp connection lifecycle to connection/index.js.
+ *
+ * This file does NOT:
+ *   - Manage auth, session files, or SESSION_ID.
+ *   - Create or manage sockets.
+ *   - Handle reconnect or disconnect logic.
+ *   - Execute commands or touch commandHandler.
+ *   - Access database models directly.
+ */
+
+"use strict";
+
 const path = require("path");
 const fs = require("fs");
-const envPath = fs.existsSync(path.join(__dirname, ".env")) ? path.join(__dirname, ".env") : path.join(__dirname, "config.env");
+
+// ── 1. Environment Variables ─────────────────────────────────────────────────
+const envPath = fs.existsSync(path.join(__dirname, ".env"))
+    ? path.join(__dirname, ".env")
+    : path.join(__dirname, "config.env");
+
 const envResult = require("dotenv").config({ path: envPath });
 if (envResult.error) {
     console.log("⚠️  Could not find environment file (.env / config.env). Using system environment variables instead.");
@@ -8,33 +33,33 @@ if (envResult.error) {
     console.log(`✅ ${path.basename(envPath)} file loaded successfully.`);
 }
 
-// ── Log Noise Filter ─────────────────────────────────────────────────────────
+// ── 2. Log Noise Filter ──────────────────────────────────────────────────────
 // Maps known noisy libsignal/Baileys internals to clean human-readable messages.
 // Each unique message is rate-limited to once per 30s to prevent spam.
 const _origError = console.error.bind(console);
-const _origLog = console.log.bind(console);
+const _origLog   = console.log.bind(console);
 
 const CLEAN_SIGNAL_ERRORS = [
     // Pattern → clean message (shown max once per 30s)
-    { match: "Bad MAC", msg: "⚠️  [Signal] Corrupt session key (Bad MAC) — key will auto-refresh on next message." },
-    { match: "No matching sessions found", msg: "⚠️  [Signal] No session found for this contact — awaiting fresh key exchange." },
-    { match: "No session found to decrypt", msg: "⚠️  [Signal] Missing sender key — message skipped, will resolve automatically." },
+    { match: "Bad MAC",                                          msg: "⚠️  [Signal] Corrupt session key (Bad MAC) — key will auto-refresh on next message." },
+    { match: "No matching sessions found",                       msg: "⚠️  [Signal] No session found for this contact — awaiting fresh key exchange." },
+    { match: "No session found to decrypt",                      msg: "⚠️  [Signal] Missing sender key — message skipped, will resolve automatically." },
     { match: "Failed to decrypt message with any known session", msg: "⚠️  [Signal] All session keys failed — contact needs to send a new message to re-establish." },
     { match: "Closing open session in favor of incoming prekey", msg: "ℹ️  [Signal] Re-keying session (prekey bundle received)." },
-    { match: "Closing session:", msg: "ℹ️  [Signal] Closing stale session." },
-    { match: "Decrypted message with closed session", msg: "ℹ️  [Signal] Decrypted via closed session (harmless)." },
-    { match: "transaction failed, rolling back", msg: "⚠️  [Signal] Transaction rollback — likely due to session mismatch (non-fatal)." },
-    // Raw session object dumps — just suppress, no output needed
-    { match: "_chains", msg: null },
-    { match: "registrationId", msg: null },
-    { match: "currentRatchet", msg: null },
-    { match: "pendingPreKey", msg: null },
-    { match: "indexInfo", msg: null },
-    { match: "baseKeyType", msg: null },
+    { match: "Closing session:",                                 msg: "ℹ️  [Signal] Closing stale session." },
+    { match: "Decrypted message with closed session",            msg: "ℹ️  [Signal] Decrypted via closed session (harmless)." },
+    { match: "transaction failed, rolling back",                 msg: "⚠️  [Signal] Transaction rollback — likely due to session mismatch (non-fatal)." },
+    // Raw session object dumps — suppress entirely
+    { match: "_chains",          msg: null },
+    { match: "registrationId",   msg: null },
+    { match: "currentRatchet",   msg: null },
+    { match: "pendingPreKey",    msg: null },
+    { match: "indexInfo",        msg: null },
+    { match: "baseKeyType",      msg: null },
     { match: "ephemeralKeyPair", msg: null },
 ];
 
-const _logCooldowns = new Map(); // key → last printed timestamp
+const _logCooldowns = new Map(); // match key → last printed timestamp
 const COOLDOWN_MS = 30_000;      // show each unique clean message max once per 30s
 
 function interceptLog(originalFn, args) {
@@ -55,927 +80,24 @@ function interceptLog(originalFn, args) {
 }
 
 console.error = (...args) => interceptLog(_origError, args);
-console.log = (...args) => interceptLog(_origLog, args);
+console.log   = (...args) => interceptLog(_origLog,   args);
 
-// Global Exception Handlers to prevent process crashes on Baileys/libsignal socket errors
-process.on("unhandledRejection", (reason, promise) => {
+// ── 3. Global Exception Handlers ─────────────────────────────────────────────
+// Prevent process crash on Baileys/libsignal non-fatal async errors.
+process.on("unhandledRejection", (reason) => {
     _origError("⚠️ Unhandled Promise Rejection:", reason);
 });
 process.on("uncaughtException", (error) => {
     _origError("⚠️ Uncaught Exception:", error);
 });
 
+// ── 4. Express Application Server ────────────────────────────────────────────
 const express = require("express");
 const app = express();
 global.app = app;
 const PORT = process.env.PORT || 3000;
-const { DisconnectReason, useMultiFileAuthState, makeCacheableSignalKeyStore, Browsers, fetchLatestBaileysVersion } = require("@whiskeysockets/baileys");
-const makeWASocket = require("@whiskeysockets/baileys").default;
-const qrcode = require("qrcode-terminal");
-const zlib = require("zlib");
 
-const { authFolder: rawAuthFolder } = require("./config");
-const authFolder = path.resolve(process.cwd(), rawAuthFolder || "session");
-const { handleMessages } = require("./lib/commandHandler");
-const { getMessage } = require("./nexus/messageModel");
-const { getSettings } = require("./lib/settings");
-
-let isFirstConnect = true;
-let isReconnecting = false;
-let consecutiveFailures = 0;
-let hasWipedSessionOnStartup = false;
-
-// Global Newsletter Defaults for "View Channel" label
-global.newsletterJid = "120363428521307680@newsletter";
-global.newsletterName = "Nexus-MD Updates";
-
-async function connectionLogic() {
-    if (isReconnecting) return;
-    isReconnecting = true;
-
-    // Prune stale temporary session files on startup to prevent disk bottlenecks
-    const { cleanSessionFolder, cleanTempMedia } = require("./lib/sessionCleaner");
-    cleanSessionFolder(24, true);
-    try {
-        const pruned = cleanTempMedia(6);
-        if (pruned > 0) console.log(`🧹 Startup Pruning: Cleaned ${pruned} stale temp media file(s).`);
-    } catch (e) {
-        console.error("⚠️ Failed to clean temp media on startup:", e.message);
-    }
-
-    // Run automatic session pruning and temp media cleaning every 2 hours
-    setInterval(() => {
-        cleanSessionFolder();
-        try {
-            cleanTempMedia(6);
-        } catch (e) { }
-    }, 2 * 60 * 60 * 1000);
-
-    const fs = require("fs");
-    const path = require("path");
-
-    // 🔑 SESSION ID FROM root settings.js / environment (Skip if marked invalid due to logout)
-    if (!process.env.SESSION_ID && !process.env.SESSION_ID_INVALID) {
-        const rootSettings = require("./settings");
-        const settingsSessionId = rootSettings.SESSION_ID || rootSettings.sessionName || rootSettings.session || global.session;
-        if (settingsSessionId && settingsSessionId.trim()) {
-            process.env.SESSION_ID = settingsSessionId.trim();
-            console.log("📦 SESSION_ID loaded from root settings.js wrapper");
-        }
-    }
-
-    // Helper to auto-sync live valid creds to .env so SESSION_ID is never stale
-    const syncSessionIdToEnv = (folder) => {
-        try {
-            const targetCredsPath = path.join(folder, "creds.json");
-            if (!fs.existsSync(targetCredsPath)) return;
-            const credsRaw = fs.readFileSync(targetCredsPath, "utf-8");
-            const credsObj = JSON.parse(credsRaw);
-            if (!credsObj || !credsObj.registered) return;
-
-            const base64Session = "Nexus~" + Buffer.from(credsRaw, "utf-8").toString("base64");
-            process.env.SESSION_ID = base64Session;
-
-            const envFile = fs.existsSync(path.join(process.cwd(), ".env"))
-                ? path.join(process.cwd(), ".env")
-                : (fs.existsSync(path.join(process.cwd(), "config.env")) ? path.join(process.cwd(), "config.env") : null);
-
-            if (envFile) {
-                let envContent = fs.readFileSync(envFile, "utf-8");
-                if (envContent.includes("SESSION_ID=")) {
-                    envContent = envContent.replace(/SESSION_ID=.*/g, `SESSION_ID=${base64Session}`);
-                } else {
-                    envContent += `\nSESSION_ID=${base64Session}\n`;
-                }
-                fs.writeFileSync(envFile, envContent, "utf-8");
-                console.log("🔄 Auto-synced active live session credentials to .env file!");
-            }
-        } catch (e) { }
-    };
-
-    // 📦 SESSION ID AUTO-RESTORE & DUMMY CHECK
-    const credsPath = path.join(authFolder, "creds.json");
-    let hasExistingValidSession = false;
-    let existingMeId = null;
-    if (fs.existsSync(credsPath)) {
-        try {
-            const rawCreds = fs.readFileSync(credsPath, "utf-8");
-            const parsed = JSON.parse(rawCreds);
-            if (parsed && parsed.registered && (parsed.noiseKey || parsed.me)) {
-                hasExistingValidSession = true;
-                existingMeId = parsed.me?.id || null;
-                console.log("📦 Active live session found in session/creds.json. Preserving updated key ratchets.");
-                // Auto-sync valid on-disk creds to .env so .env stays updated
-                syncSessionIdToEnv(authFolder);
-            }
-        } catch (e) {
-            console.log("⚠️ Existing creds.json is invalid or corrupted. Will restore from SESSION_ID...");
-        }
-    }
-
-    // Preserve valid on-disk session over stale .env SESSION_ID unless force restore is explicitly set
-    if (hasExistingValidSession && process.env.SESSION_ID && existingMeId) {
-        try {
-            let rawId = process.env.SESSION_ID.trim().replace(/^["']|["']$/g, "").trim();
-            let sessionPayload = rawId.includes("~") ? rawId.split("~").slice(1).join("~") : rawId;
-            sessionPayload = sessionPayload.replace(/\s+/g, "");
-            let safeB64 = sessionPayload.replace(/-/g, "+").replace(/_/g, "/");
-            while (safeB64.length % 4 !== 0) safeB64 += "=";
-            const decoded = Buffer.from(safeB64, "base64").toString("utf-8");
-            const meMatch = decoded.match(/"id"\s*:\s*"([^"]+@s\.whatsapp\.net)"/);
-            const sessionMeId = meMatch ? meMatch[1] : null;
-            if (sessionMeId && sessionMeId !== existingMeId && process.env.SESSION_ID_FORCE_RESTORE === "true") {
-                console.log(`📦 SESSION_ID account (${sessionMeId}) differs from on-disk session (${existingMeId}). Force restore enabled.`);
-                hasExistingValidSession = false;
-            } else if (sessionMeId && sessionMeId !== existingMeId) {
-                console.log(`📦 Active on-disk session (${existingMeId}) preserved over stale SESSION_ID (${sessionMeId}). Auto-syncing .env...`);
-                syncSessionIdToEnv(authFolder);
-            }
-        } catch (e) { /* ignore, keep existing session */ }
-    }
-
-    if (process.env.SESSION_ID_INVALID === "true") {
-        console.log("ℹ️ Session credentials were logged out or unlinked. Ready for fresh QR Code / Pairing Code login.");
-    } else if (process.env.SESSION_ID && !hasExistingValidSession) {
-        let rawId = process.env.SESSION_ID.trim().replace(/^["']|["']$/g, "").trim();
-        if (rawId.includes("SESSION_ID=")) {
-            rawId = rawId.split("SESSION_ID=")[1].trim();
-        }
-        
-        let sessionId = rawId;
-        if (rawId.includes("~")) {
-            sessionId = rawId.split("~").slice(1).join("~");
-        } else if (/^nexus[-_~]?/i.test(rawId)) {
-            sessionId = rawId.replace(/^nexus[-_~]?/i, "");
-        }
-        sessionId = sessionId.replace(/\s+/g, "");
-
-        const DUMMY_VALUES = ["none", "null", "undefined", "session_id_here", "your_session_id", "nexus~", "false", "0", "optional", "empty"];
-        // Only reject the exact known placeholder/demo key — do NOT use .includes() on a prefix
-        // because all real Baileys sessions share the same noiseKey base64 prefix.
-        const EXACT_PLACEHOLDER_IDS = [
-            "eyJub2lzZUtleSI6eyJwcml2YXRlIjp7InR5cGUiOiJCdWZmZXIiLCJkYXRhIjoiU0pUV0VlblZHNE55eElrT1ROaXBNR0x5SlI1ZWwxemFIYzJJWUprbUNicFU9In0s"
-        ];
-        const isExactPlaceholder = EXACT_PLACEHOLDER_IDS.includes(sessionId);
-        if (!sessionId || sessionId.length < 20 || DUMMY_VALUES.includes(sessionId.toLowerCase()) || isExactPlaceholder) {
-            console.log("ℹ️ Placeholder, sample, or invalid SESSION_ID detected. Ignoring SESSION_ID to allow QR/Pairing mode.");
-            delete process.env.SESSION_ID;
-        } else {
-            console.log("📦 Initializing credentials from SESSION_ID environment variable...");
-            try {
-                // Support URL-safe base64 (- and _) and fix missing padding =
-                let safeBase64 = sessionId.replace(/-/g, "+").replace(/_/g, "/");
-                while (safeBase64.length % 4 !== 0) {
-                    safeBase64 += "=";
-                }
-
-                const buffer = Buffer.from(safeBase64, "base64");
-
-                let credsJson = "";
-                const decodeBuffer = (buf) => {
-                    try { return zlib.gunzipSync(buf).toString("utf-8"); } catch {
-                        try { return zlib.inflateSync(buf).toString("utf-8"); } catch {
-                            return buf.toString("utf-8");
-                        }
-                    }
-                };
-
-                credsJson = decodeBuffer(buffer);
-                if (!credsJson.includes("{") && /^[a-zA-Z0-9+/=]+$/.test(credsJson.trim())) {
-                    const nestedBuffer = Buffer.from(credsJson.trim(), "base64");
-                    credsJson = decodeBuffer(nestedBuffer);
-                }
-
-                const extractValidJsonFromBuffer = (buf) => {
-                    const text = buf.toString("utf-8");
-                    const firstBrace = text.indexOf("{");
-                    if (firstBrace === -1) return null;
-
-                    for (let i = 0; i < text.length; i++) {
-                        if (text[i] === "{") {
-                            try {
-                                const candidate = text.substring(i, text.lastIndexOf("}") + 1);
-                                if (candidate.includes("noiseKey") || candidate.includes("creds")) {
-                                    JSON.parse(candidate);
-                                    return candidate;
-                                }
-                            } catch (e) { }
-                        }
-                    }
-                    return null;
-                };
-
-                const finalJson = extractValidJsonFromBuffer(Buffer.from(credsJson)) || extractValidJsonFromBuffer(buffer);
-
-                if (finalJson) {
-                    let parsed = JSON.parse(finalJson);
-                    let creds = parsed.creds || (parsed.noiseKey ? parsed : null);
-
-                    if (creds) {
-                        creds.registered = true;
-                        const finalPath = path.join(authFolder, "creds.json");
-                        if (!fs.existsSync(path.dirname(finalPath))) fs.mkdirSync(path.dirname(finalPath), { recursive: true });
-                        fs.writeFileSync(finalPath, JSON.stringify(creds));
-                        console.log(`✅ Session credentials successfully synced to: ${finalPath}`);
-                    } else {
-                        console.error("❌ Invalid creds object structure in SESSION_ID.");
-                        delete process.env.SESSION_ID;
-                    }
-                } else {
-                    console.error("❌ Error: Could not extract valid credentials JSON from SESSION_ID. The SESSION_ID may be corrupted or truncated.");
-                    delete process.env.SESSION_ID;
-                }
-            } catch (e) {
-                console.error("❌ Failed to restore session from SESSION_ID:", e.message);
-                delete process.env.SESSION_ID;
-            }
-        }
-    }
-
-    let { state, saveCreds } = await useMultiFileAuthState(authFolder);
-
-    // Clean session directory on fresh login to prevent old/conflicting pre-key/session files from causing loops
-    if (!hasWipedSessionOnStartup && !state.creds.registered && !process.env.SESSION_ID) {
-        hasWipedSessionOnStartup = true;
-        console.log("🧹 Fresh login setup detected. Wiping any old/corrupted keys from session directory...");
-        try {
-            const fs = require("fs");
-            const path = require("path");
-            const sessionDir = authFolder;
-            if (fs.existsSync(sessionDir)) {
-                fs.readdirSync(sessionDir).forEach(file => {
-                    try {
-                        fs.unlinkSync(path.join(sessionDir, file));
-                    } catch (e) { }
-                });
-            }
-            // Re-load auth state after cleaning
-            const freshState = await useMultiFileAuthState(authFolder);
-            state = freshState.state;
-            saveCreds = freshState.saveCreds;
-        } catch (e) {
-            console.error("⚠️ Failed to clean session folder on startup:", e.message);
-        }
-    }
-
-    const authMode = (process.env.AUTH_MODE || process.env.MODE_AUTH || "").trim().toLowerCase();
-    const explicitPairingNum = process.env.PAIRING_NUMBER ? process.env.PAIRING_NUMBER.trim() : "";
-    const pairingNum = explicitPairingNum ? explicitPairingNum.replace(/[^0-9]/g, "") : "";
-    const usePairingCode = !state.creds.registered && (authMode === "pairing" || (authMode !== "qr" && !!pairingNum));
-
-    if (!state.creds.registered && !process.env.SESSION_ID) {
-        if (usePairingCode && pairingNum) {
-            console.log(`📲 Auth Mode: PAIRING CODE active (+${pairingNum})`);
-        } else {
-            console.log("📲 Auth Mode: QR CODE active. Scan terminal QR code or open web interface.");
-        }
-    }
-
-    const NodeCache = require("node-cache");
-    const msgRetryCounterCache = new NodeCache();
-
-    // Standard Pino logger set to 'silent' — suppresses all Baileys/libsignal internal noise.
-    // Meaningful session warnings are already caught and reformatted by the CLEAN_SIGNAL_ERRORS
-    // interceptor at the top of this file. Raw dumps (signedKeyId, baseKey, preKeyId, etc.) are
-    // completely hidden to keep live logs clean.
-    const P = require("pino");
-    const logger = P({ level: "silent" });
-
-    // Fetch latest WhatsApp Web version to bypass version checks on WhatsApp servers
-    let version = [2, 3000, 1017531287]; // Fallback version
-    try {
-        const { version: latestVer } = await fetchLatestBaileysVersion();
-        version = latestVer;
-        console.log(`ℹ️ Using WhatsApp Web version: ${version.join(".")}`);
-    } catch (e) {
-        console.log("⚠️ Failed to fetch latest WhatsApp version, using fallback version.");
-    }
-
-    const sock = makeWASocket({
-        auth: {
-            creds: state.creds,
-            keys: makeCacheableSignalKeyStore(state.keys, logger),
-        },
-        logger,
-        version,
-        markOnline: true, // Mark online to ensure real-time message delivery
-        browser: Browsers.windows("Desktop"),
-        msgRetryCounterCache,
-        defaultQueryTimeoutMs: 60000, // Prevent queries from hanging indefinitely
-        syncFullHistory: false,
-        shouldSyncHistoryMessage: () => false, // Disable history syncing to save RAM and avoid memory leaks
-        linkPreviewHighQuality: false,
-        generateHighQualityLinkPreview: false,
-        connectTimeoutMs: 60000,
-        keepAliveIntervalMs: 30000,
-        getMessage: async (key) => {
-            try {
-                const msg = await getMessage(key.id);
-                return msg ? msg.content : undefined;
-            } catch (e) {
-                return undefined;
-            }
-        }
-    });
-    global.sock = sock; // Expose globally for Admin Panel
-
-    // Custom wrapper for sendMessage to inject clickable "View Channel" label
-    const originalSendMessage = sock.sendMessage.bind(sock);
-    sock.sendMessage = async (jid, content, options = {}) => {
-        let msgPayload = typeof content === "string" ? { text: content } : content;
-        const settings = getSettings();
-
-        const isChannelHidden = settings.hideViewChannel === true || settings.hideViewChannel === "true" || settings.hideViewChannel === 1 || settings.hideViewChannel === "1";
-
-        if (!isChannelHidden && global.newsletterJid) {
-            const channelData = {
-                newsletterJid: global.newsletterJid,
-                newsletterName: global.newsletterName || "Nexus-MD Updates",
-                serverMessageId: 100
-            };
-
-            if (msgPayload && typeof msgPayload === "object" && !msgPayload.delete && !msgPayload.react) {
-                if (!msgPayload.contextInfo) {
-                    msgPayload.contextInfo = {};
-                }
-                msgPayload.contextInfo.forwardingScore = 999;
-                msgPayload.contextInfo.isForwarded = true;
-                msgPayload.contextInfo.forwardedNewsletterMessageInfo = channelData;
-
-                if (options) {
-                    if (!options.contextInfo) options.contextInfo = {};
-                    options.contextInfo.forwardingScore = 999;
-                    options.contextInfo.isForwarded = true;
-                    options.contextInfo.forwardedNewsletterMessageInfo = channelData;
-                }
-            }
-        }
-        return await originalSendMessage(jid, msgPayload, options);
-    };
-
-    global.latestPairingCode = null;
-    global.latestPairingNumber = pairingNum || null;
-
-    const sanitizePhoneNumber = (rawNum) => {
-        if (!rawNum) return "";
-        let clean = String(rawNum).replace(/[^0-9]/g, "");
-        if (clean.length > 15) clean = clean.slice(0, 15);
-        return clean;
-    };
-
-    let pairingCodeRequested = false;
-    const requestAndPrintPairingCode = async (phoneInput) => {
-        const cleanPhone = sanitizePhoneNumber(phoneInput);
-        if (!cleanPhone || cleanPhone.length < 7) {
-            console.error("❌ Invalid phone number format for pairing code:", phoneInput);
-            return null;
-        }
-
-        if (pairingCodeRequested && global.latestPairingCode) {
-            return global.latestPairingCode;
-        }
-
-        pairingCodeRequested = true;
-        try {
-            console.log(`📡 Requesting pairing code for +${cleanPhone}...`);
-            if (!sock || typeof sock.requestPairingCode !== "function") {
-                throw new Error("WhatsApp socket connection not ready yet.");
-            }
-            const code = await sock.requestPairingCode(cleanPhone);
-            global.latestPairingCode = code;
-            global.latestPairingNumber = cleanPhone;
-
-            console.clear();
-            console.log("\n========================================");
-            console.log("🔗 YOUR NEXUS-MD PAIRING CODE:");
-            console.log(`👉 ${code} 👈`);
-            console.log("========================================");
-            console.log("1. Open WhatsApp on your phone.");
-            console.log("2. Go to Linked Devices > Link with Phone Number.");
-            console.log(`3. Enter the code shown above.\n`);
-            return code;
-        } catch (err) {
-            console.error("❌ Failed to generate pairing code:", err.message || err);
-            pairingCodeRequested = false;
-            return null;
-        }
-    };
-
-    global.requestPairingCode = requestAndPrintPairingCode;
-
-    // ⌚ WATCHDOG: If SESSION_ID is present but fails to connect within 60s, enable Pairing Code fallback.
-    let connectionTimeout = null;
-    if (process.env.SESSION_ID) {
-        connectionTimeout = setTimeout(async () => {
-            if (!sock.user && !global.isSockConnected) {
-                console.log("⚠️  Session ID failed to connect within 60s. Falling back to Pairing Code...");
-                process.env.SESSION_ID_FAILED = "true";
-                if (pairingNum) {
-                    await requestAndPrintPairingCode(pairingNum);
-                } else {
-                    console.log("⚠️ No phone number provided for pairing code. Defaulting to QR code or Web Auth.");
-                }
-            }
-        }, 60000);
-    }
-
-    if (usePairingCode && !state.creds.registered && !process.env.SESSION_ID && pairingNum) {
-        setTimeout(async () => {
-            await requestAndPrintPairingCode(pairingNum);
-        }, 5000);
-    }
-
-    sock.ev.on("creds.update", saveCreds);
-
-    sock.ev.on("connection.update", async (update) => {
-        const { connection, lastDisconnect, qr } = update;
-
-        if (qr) {
-            global.latestQr = qr;
-            if ((!process.env.SESSION_ID || process.env.SESSION_ID_FAILED) && !state.creds.registered) {
-                const activePairingNum = pairingNum || global.latestPairingNumber;
-                if (usePairingCode && activePairingNum) {
-                    await requestAndPrintPairingCode(activePairingNum);
-                } else {
-                    const appUrl = process.env.HEROKU_APP_NAME 
-                        ? `https://${process.env.HEROKU_APP_NAME}.herokuapp.com/qr` 
-                        : (process.env.APP_URL ? `${process.env.APP_URL.replace(/\/$/, "")}/qr` : `http://localhost:${PORT}/qr`);
-                    console.clear();
-                    console.log("💡 Need Pairing Code or Web Login?");
-                    console.log(`👉 Open ${appUrl} in your web browser for high-res QR code or Pairing Code login!\n`);
-                    console.log("📲 Scan this QR to login:\n");
-                    qrcode.generate(qr, { small: true });
-                    console.log("\n💡 Open web browser at:", appUrl);
-                }
-            }
-        }
-
-        if (connection === "open") {
-            if (connectionTimeout) {
-                clearTimeout(connectionTimeout);
-                connectionTimeout = null;
-            }
-            delete process.env.SESSION_ID_FAILED;
-            delete process.env.SESSION_ID_INVALID;
-            global.isSockConnected = true;
-            global.latestQr = null;
-            isReconnecting = false;
-            consecutiveFailures = 0; // Reset failure counter on successful connection
-            global.botStartTime = Math.floor(Date.now() / 1000); // Unix seconds — ignore any message older than this
-            console.log("✅ Bot connected and stable!");
-
-            // Auto-sync current active credentials to .env so SESSION_ID is always valid
-            syncSessionIdToEnv(authFolder);
-
-            // Initialize Database (Centralized)
-            const { initDb } = require("./nexus/db");
-            await initDb();
-
-            const { loadSettings, getSettings } = require("./lib/settings");
-            await loadSettings();
-
-            // Set up alwaysOnline presence updates
-            const settings = getSettings();
-            if (settings.alwaysOnline) {
-                await sock.sendPresenceUpdate("available").catch(() => { });
-            }
-
-            if (global.alwaysOnlineInterval) clearInterval(global.alwaysOnlineInterval);
-            global.alwaysOnlineInterval = setInterval(async () => {
-                try {
-                    const currentSettings = getSettings();
-                    if (currentSettings.alwaysOnline) {
-                        await sock.sendPresenceUpdate("available").catch(() => { });
-                    }
-                } catch (e) { }
-            }, 15000);
-
-            // Resolve newsletter metadata to get JID for "View Channel" feature
-            try {
-                console.log("📢 Resolving WhatsApp Channel JID for invite: 0029VbD62UY7IUYU6cftzu02");
-                const metadata = await sock.newsletterMetadata("invite", "0029VbD62UY7IUYU6cftzu02").catch(() => null);
-                if (metadata && metadata.id) {
-                    global.newsletterJid = metadata.id;
-                    global.newsletterName = metadata.subject || "Nexus-MD Updates";
-                    console.log(`📢 Resolved Channel JID: ${global.newsletterJid} (${global.newsletterName})`);
-
-                    // Auto-follow channel on connection/deployment
-                    const jsonStore = require("./nexus/jsonStore");
-                    if (!jsonStore.get("channel_autofollowed")) {
-                        try {
-                            await sock.newsletterFollow(global.newsletterJid);
-                            jsonStore.set("channel_autofollowed", true);
-                            console.log("✅ Successfully autofollowed channel!");
-                        } catch (followErr) {
-                            console.error("⚠️ Failed to autofollow resolved channel:", followErr.message);
-                        }
-                    }
-                } else {
-                    global.newsletterJid = "120363428521307680@newsletter"; // Fallback to user's known channel JID
-                    global.newsletterName = "Nexus-MD Updates";
-                    console.log(`⚠️ Metadata lookup returned null, using fallback JID: ${global.newsletterJid}`);
-                }
-            } catch (e) {
-                console.error("⚠️ Failed to resolve newsletter JID:", e.message);
-                global.newsletterJid = "120363428521307680@newsletter"; // Fallback JID
-                global.newsletterName = "Nexus-MD Updates";
-            }
-
-            // Auto-join WhatsApp group on connection/deployment
-            try {
-                const groupLink = process.env.AUTO_JOIN_GROUP || "IVnWNxWwfT1JdG4QoZOmeL";
-                const inviteCode = groupLink.replace(/.*chat\.whatsapp\.com\//, "").trim();
-                if (inviteCode) {
-                    const jsonStore = require("./nexus/jsonStore");
-                    if (!jsonStore.get(`group_autojoined_${inviteCode}`)) {
-                        try {
-                            const joinedJid = await sock.groupAcceptInvite(inviteCode);
-                            jsonStore.set(`group_autojoined_${inviteCode}`, true);
-                            console.log(`✅ Auto-joined WhatsApp Group: ${joinedJid || inviteCode}`);
-                        } catch (joinErr) {
-                            console.log(`ℹ️ Group Auto-Join Status: ${joinErr.message || joinErr}`);
-                            if (joinErr.message?.includes("already-in-group")) {
-                                jsonStore.set(`group_autojoined_${inviteCode}`, true);
-                            }
-                        }
-                    }
-                }
-            } catch (e) {
-                console.error("⚠️ Failed to process group auto-join:", e.message);
-            }
-
-            const myJid = (sock.user && sock.user.id) || (sock.authState.creds.me && sock.authState.creds.me.id) || (sock.authState.creds.me && sock.authState.creds.me.lid) || "";
-            const { toJid } = require("./lib/utils");
-            global.myJid = toJid(myJid);
-
-            const { ownerNumbers } = require("./config");
-            const primarySudo = process.env.SUDO ? toJid(process.env.SUDO) : toJid(ownerNumbers[0]);
-            console.log(`📊 SELF-ID: ${global.myJid} | SUDO: ${primarySudo || "NOT CONFIGURED"}`);
-
-
-            if (isFirstConnect) {
-                isFirstConnect = false;
-                const jsonStore = require("./nexus/jsonStore");
-
-                // Only send startup connection message once on initial setup (remember across restarts via storage)
-                if (!jsonStore.get("startup_welcome_sent")) {
-                    jsonStore.set("startup_welcome_sent", true, true);
-
-                    const path = require("path");
-                    const fs = require("fs");
-                    const { authFolder, version } = require("./config");
-
-                    // Generate Session ID (sent to owner DM only — not printed to logs)
-                    const credsPath = path.join(authFolder, "creds.json");
-                    let sessionId = "NO_CREDS_FOUND";
-                    if (fs.existsSync(credsPath)) {
-                        const creds = fs.readFileSync(credsPath, "utf-8");
-                        sessionId = "NEXUS~" + Buffer.from(creds).toString("base64");
-                    }
-
-                    // 💎 PREMIUM USER MESSAGE
-                    const { getSettings } = require("./lib/settings");
-                    const { sendButtonMessage } = require("./lib/utils");
-                    const settings = getSettings();
-                    const botName = settings.botName || "Nexus-MD";
-                    const CHANNEL_URL = "https://whatsapp.com/channel/0029VbD62UY7UYU6cftzu02";
-                    const REPO_URL = "https://github.com/devwhitewizard/nexus-v1md";
-
-                    const connectButtons = [
-                        { text: "💻 GitHub Repo", url: REPO_URL }
-                    ];
-
-                    const userWelcomeText = `✨ *${botName} v${version} Connected!* ✨\n\n` +
-                        `🤖 *Status:* Connected.\n` +
-                        `✅ *Secure:* Your connection is stable and encrypted.\n\n` +
-                        `🌟 *Welcome!* Type *.menu* to see what I can do!`;
-
-                    const adminAlertText = `🛠️ *${botName} v${version}: Connection Established*\n\n` +
-                        `📦 *Session:* Restored/Initialized\n` +
-                        `💾 *Storage:* Nexus-MD-100%\n\n` +
-                        `> Session ID has been printed to your private console.`;
-
-                    // 📡 Reliable Message Delivery
-                    setTimeout(async () => {
-                        try {
-                            console.log("📨 Sending startup welcome message to bot with CTA buttons...");
-                            await sendButtonMessage(sock, global.myJid, userWelcomeText, botName, connectButtons, null, null);
-                            console.log("✅ Startup message sent successfully.");
-
-                            const myDigits = global.myJid ? global.myJid.replace(/\D/g, "") : "";
-                            const sudoDigits = primarySudo ? primarySudo.replace(/\D/g, "") : "";
-
-                            if (primarySudo && sudoDigits && myDigits && sudoDigits !== myDigits && isSudo(primarySudo)) {
-                                console.log(`🛰️ Sending tech alert to Sudo: ${primarySudo}`);
-                                await sendButtonMessage(sock, primarySudo, adminAlertText, botName, connectButtons, null, null);
-                            }
-                        } catch (e) {
-                            console.error("⚠️ Failed to send startup message:", e.message);
-                        }
-                    }, 5000); // 5s delay to ensure socket is ready for message sending
-                }
-            }
-
-
-            // 🩺 Active Connection Watchdog (Detects silent zombie connections)
-            if (global.healthCheckInterval) {
-                clearInterval(global.healthCheckInterval);
-            }
-            global.healthCheckInterval = setInterval(async () => {
-                try {
-                    const wsOpen = sock && sock.ws && (
-                        sock.ws.isOpen === true ||
-                        sock.ws.readyState === 1 ||
-                        (sock.ws.socket && sock.ws.socket.readyState === 1)
-                    );
-                    if (wsOpen) { // WebSocket is OPEN
-                        // Query the blocklist to ensure socket responds and is not a zombie
-                        await Promise.race([
-                            sock.fetchBlocklist().catch(() => null),
-                            new Promise((_, reject) => setTimeout(() => reject(new Error("Socket query timeout")), 15000))
-                        ]);
-                    } else {
-                        throw new Error("WebSocket not open");
-                    }
-                } catch (err) {
-                    console.error("⚠️ [Watchdog] Active connection health check failed:", err.message);
-                    clearInterval(global.healthCheckInterval);
-                    try { sock.end(); } catch (e) { }
-                    process.exit(1);
-                }
-            }, 3 * 60 * 1000); // check every 3 minutes
-
-            setInterval(async () => {
-                const { MessageLog } = require("./nexus/messageModel");
-                const { Op } = require("sequelize");
-                const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
-                try {
-                    await MessageLog.destroy({ where: { timestamp: { [Op.lt]: sevenDaysAgo } } });
-                } catch (e) { }
-            }, 24 * 60 * 60 * 1000);
-        }
-
-        if (connection === "close") {
-            isReconnecting = false;
-            if (global.healthCheckInterval) {
-                clearInterval(global.healthCheckInterval);
-            }
-            if (global.alwaysOnlineInterval) {
-                clearInterval(global.alwaysOnlineInterval);
-            }
-            const statusCode = lastDisconnect?.error?.output?.statusCode || lastDisconnect?.error?.output?.payload?.statusCode;
-
-            // Translate Baileys status codes into human-readable explanations
-            const REASON_EXPLANATIONS = {
-                [DisconnectReason.badSession]: "Bad Session File — Credentials corrupted, wiping and restarting connection...",
-                [DisconnectReason.connectionClosed]: "Connection Closed — WhatsApp server closed the socket, reconnecting...",
-                [DisconnectReason.connectionLost]: "Connection Lost — Internet connection or socket drop, reconnecting...",
-                [DisconnectReason.connectionReplaced]: "Connection Replaced — Another session logged in with this phone number.",
-                [DisconnectReason.loggedOut]: "Logged Out — Bot unlinked or logged out from phone. Scan QR code or pairing code to re-link.",
-                [DisconnectReason.restartRequired]: "Restart Required — WhatsApp server requested restart, reconnecting...",
-                [DisconnectReason.timedOut]: "Timed Out — Connection timed out (poor server connection), reconnecting...",
-                [DisconnectReason.multideviceMismatch]: "Multi-Device Mismatch — Please re-pair your WhatsApp device."
-            };
-
-            global.isSockConnected = false;
-            // Detect network-related or transient stream errors vs true credential invalidation
-            const isTransientError =
-                lastDisconnect?.error?.code === "ENOTFOUND" ||
-                lastDisconnect?.error?.code === "EAI_AGAIN" ||
-                lastDisconnect?.error?.code === "ECONNREFUSED" ||
-                lastDisconnect?.error?.code === "ETIMEDOUT" ||
-                lastDisconnect?.error?.code === "ECONNRESET" ||
-                statusCode === DisconnectReason.connectionLost ||
-                statusCode === DisconnectReason.connectionClosed ||
-                statusCode === DisconnectReason.timedOut ||
-                statusCode === DisconnectReason.restartRequired;
-
-            const reasonMessage = REASON_EXPLANATIONS[statusCode] || 
-                (isTransientError ? "Network Connection Lost / Transient Restart — Reconnecting..." : `Unexpected Disconnect (Status Code: ${statusCode || 'Unknown'})`);
-
-            console.log(`🔌 [DISCONNECT] ${reasonMessage}`);
-
-            if (!isTransientError) {
-                consecutiveFailures++;
-                console.log(`⚠️ [HEALTH] Non-transient failure counter: ${consecutiveFailures}/5`);
-            }
-
-            if (statusCode === DisconnectReason.loggedOut || consecutiveFailures >= 5) {
-                if (consecutiveFailures >= 5) {
-                    console.log("⚠️ [SELF-HEALING] 5 consecutive session-related failures detected. Wiping credentials & requesting fresh login...");
-                } else {
-                    console.log("⚠️ [SELF-HEALING] Bot logged out or unlinked from phone. Wiping local session to present fresh login...");
-                }
-                consecutiveFailures = 0; // Reset counter
-                hasWipedSessionOnStartup = false; // Reset wipe flag
-
-                // Mark SESSION_ID as invalid to prevent restoring dead session
-                process.env.SESSION_ID_INVALID = "true";
-                delete process.env.SESSION_ID;
-                console.log("⚠️ [SELF-HEALING] Session marked invalid for this run. Bot will wait for fresh QR Code / Pairing login.");
-
-                const jsonStore = require("./nexus/jsonStore");
-                jsonStore.set("startup_welcome_sent", false);
-
-                const fs = require("fs");
-                const path = require("path");
-                const { authFolder } = require("./config");
-                const credsPath = path.join(authFolder, "creds.json");
-                try {
-                    if (fs.existsSync(credsPath)) fs.unlinkSync(credsPath);
-                    const sessionDir = authFolder;
-                    if (fs.existsSync(sessionDir)) {
-                        fs.readdirSync(sessionDir).forEach(file => {
-                            try { fs.unlinkSync(path.join(sessionDir, file)); } catch (e) { }
-                        });
-                    }
-                } catch (e) {
-                    console.error("❌ [SESSION CLEAN] Failed to clear session dir:", e.message);
-                }
-
-                setTimeout(() => connectionLogic(), 5000);
-            } else {
-                const delay = statusCode === DisconnectReason.restartRequired ? 2000 : 8000;
-                console.log(`🔄 [RECONNECT] Attempting reconnect in ${delay / 1000} seconds...`);
-                setTimeout(() => connectionLogic(), delay);
-            }
-        }
-    });
-
-    const { handleAutomation } = require("./lib/automation");
-    const { logMessageCard } = require("./lib/logger");
-    sock.ev.on("messages.upsert", async (upsert) => {
-        // Only process live incoming messages — skip historical replays and pre-startup messages
-        if (upsert.type !== "notify") return;
-
-        for (const m of upsert.messages) {
-            if (!m.message) continue;
-
-            // Discard old offline messages sent >60s before the bot connected this session
-            let msgTime = 0;
-            if (m.messageTimestamp) {
-                let raw = m.messageTimestamp;
-                if (typeof raw === "object" && raw !== null) {
-                    raw = raw.toNumber ? raw.toNumber() : (raw.low || 0);
-                }
-                msgTime = Number(raw || 0);
-                if (msgTime > 10000000000) msgTime = Math.floor(msgTime / 1000);
-            }
-            if (global.botStartTime && msgTime > 0 && msgTime < (global.botStartTime - 60)) {
-                console.log(`⏩ Skipping pre-startup message (${new Date(msgTime * 1000).toLocaleTimeString()})`);
-                continue;
-            }
-
-            // Log message in Cypher-X terminal card format
-            logMessageCard(m);
-        }
-
-        const m = upsert.messages[0];
-        if (m && m.message) {
-            // Run automation in background to prevent blocking command replies (e.g. status-view delays)
-            handleAutomation(sock, m).catch(err => console.error("⚠️ Automation Error:", err));
-            await handleMessages(sock, upsert);
-        }
-    });
-
-    const { handleMessageDelete } = require("./lib/automation");
-    sock.ev.on("messages.update", async (update) => {
-        await handleMessageDelete(sock, update);
-    });
-
-    // 📞 Anti-Call Protection (Controlled)
-    sock.ev.on("call", async (calls) => {
-        const settings = getSettings();
-        if (settings.antiCall) {
-            for (const call of calls) {
-                if (call.status === "offer") {
-                    console.log(`📞 Anti-Call: Rejecting call from ${call.from}`);
-                    await sock.rejectCall(call.id, call.from);
-                }
-            }
-        }
-    });
-
-    sock.ev.on("group-participants.update", async (update) => {
-        try {
-            const { id, participants, action } = update;
-
-            // Force refresh group metadata in Baileys cache when participants or admin roles change
-            const metadata = await sock.groupMetadata(id).catch(() => null);
-
-            const settings = getSettings();
-            const jsonStore = require("./nexus/jsonStore");
-            const localMode = jsonStore.get(`events_mode_${id}`, null);
-            const isActive = localMode !== null ? (localMode === "on") : settings.groupEventsGlobal;
-
-            if (!isActive) return;
-            if (!metadata) return;
-
-            const timeStr = new Date().toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit", hour12: false });
-            const dateStr = new Date().toLocaleDateString("en-GB", { day: "2-digit", month: "short", year: "numeric" });
-            const groupName = metadata.subject || "";
-            const groupDesc = metadata.desc?.toString()?.trim() || "Welcome to the official group community.";
-            const memberCount = metadata.participants?.length || 0;
-
-            const botBranding = (settings.botName || "NEXUS TECH").toUpperCase();
-
-            const defaultWelcomeTemplate =
-`╔═════════════════════════════════════╗
-║ 🎉 WELCOME! 🎉                      ║
-╚═════════════════════════════════════╝
-
-👋 Hey @user! Welcome to *@group* 🏆
-
-📋 _🚀 @group_
-
-{desc}
-
-👥 You are member *#{count}*
-📅 Joined: *{date}* at *{time}*
-
-✅ *Quick tips:*
- • Type *.menu* to see all commands
- • Be respectful to all members
- • Have fun! 🔥
-
-__________________________________________________
-🔊 *Reach us on:* WhatsApp group & channel
-
-│ _${botBranding} ⚡_`;
-
-            const defaultGoodbyeTemplate =
-`╔═════════════════════════════════════╗
-║ 👋 GOODBYE! 😢                      ║
-╚═════════════════════════════════════╝
-
-Goodbye @user from *@group*! We hope to see you back soon.
-
-👥 Remaining members: *#{count}*
-⌚ Left at: *{time}*
-
-│ _${botBranding} ⚡_`;
-
-            for (const participant of participants) {
-                const userMention = `@${participant.split("@")[0]}`;
-
-                if (action === "add") {
-                    let msgTemplate = jsonStore.get(`welcome_msg_${id}`, null) || settings.welcomeMsg;
-                    if (!msgTemplate || msgTemplate.includes("Hi @user, welcome to *@group*! 👋")) {
-                        msgTemplate = defaultWelcomeTemplate;
-                    }
-
-                    const msg = msgTemplate
-                        .replace(/@user/g, userMention)
-                        .replace(/{user}/g, userMention)
-                        .replace(/{group}/g, groupName)
-                        .replace(/@group/g, groupName)
-                        .replace(/{count}/g, memberCount)
-                        .replace(/{date}/g, dateStr)
-                        .replace(/{time}/g, timeStr)
-                        .replace(/{desc}/g, groupDesc);
-
-                    const ppUrl = await sock.profilePictureUrl(participant, "image").catch(() => sock.profilePictureUrl(id, "image").catch(() => null));
-                    if (ppUrl) {
-                        await sock.sendMessage(id, { image: { url: ppUrl }, caption: msg, mentions: [participant] }).catch(async () => {
-                            await sock.sendMessage(id, { text: msg, mentions: [participant] }).catch(() => { });
-                        });
-                    } else {
-                        await sock.sendMessage(id, { text: msg, mentions: [participant] }).catch(() => { });
-                    }
-                } else if (action === "remove") {
-                    let msgTemplate = jsonStore.get(`goodbye_msg_${id}`, null) || settings.goodbyeMsg;
-                    if (!msgTemplate || msgTemplate.includes("Goodbye @user, we hope to see you back soon! 😢")) {
-                        msgTemplate = defaultGoodbyeTemplate;
-                    }
-
-                    const msg = msgTemplate
-                        .replace(/@user/g, userMention)
-                        .replace(/{user}/g, userMention)
-                        .replace(/{group}/g, groupName)
-                        .replace(/@group/g, groupName)
-                        .replace(/{count}/g, memberCount)
-                        .replace(/{date}/g, dateStr)
-                        .replace(/{time}/g, timeStr)
-                        .replace(/{desc}/g, groupDesc);
-
-                    await sock.sendMessage(id, { text: msg, mentions: [participant] }).catch(() => { });
-                } else if (action === "promote" && settings.eventsPromote) {
-                    const msg = `🎉 *Promotion Notice:*\n\n${userMention} has been promoted to Admin in this group.\n\n⌚ *Time:* ${timeStr}`;
-                    await sock.sendMessage(id, { text: msg, mentions: [participant] }).catch(() => { });
-                } else if (action === "demote" && settings.eventsPromote) {
-                    const msg = `⚠️ *Demotion Notice:*\n\n${userMention} is no longer an Admin in this group.\n\n⌚ *Time:* ${timeStr}`;
-                    await sock.sendMessage(id, { text: msg, mentions: [participant] }).catch(() => { });
-                }
-            }
-        } catch (err) {
-            console.error("⚠️ Error handling group-participants.update:", err.message);
-        }
-    });
-}
-
-connectionLogic();
-
-// 🌐 Health Check Server
+// Health check root endpoint
 app.get("/", (req, res) => {
     const { getSettings } = require("./lib/settings");
     const settings = getSettings();
@@ -983,7 +105,7 @@ app.get("/", (req, res) => {
     res.send(`🤖 ${botName} is Online and Healthy!`);
 });
 
-// 🛠️ Admin Control Panel APIs
+// Admin Control Panel API routes (/qr, /status, /api/*)
 try {
     const { initAdminApi } = require("./lib/adminApi");
     initAdminApi(app);
@@ -993,5 +115,11 @@ try {
 
 app.listen(PORT, () => {
     console.log(`🌍 Heartbeat server listening on port ${PORT}`);
-    console.log(`👉 If the terminal QR code is too big or hard to scan, open http://localhost:${PORT}/qr in your web browser to scan!\n`);
+    console.log(`👉 If the terminal QR code is too big or hard to scan, open http://localhost:${PORT}/qr in your web browser!\n`);
 });
+
+// ── 5. WhatsApp Connection — Single Lifecycle Owner ──────────────────────────
+// All auth, session, socket, disconnect, and reconnect logic lives in connection/.
+// This is the only place startConnection() is called from application code.
+const { startConnection } = require("./connection");
+startConnection();
