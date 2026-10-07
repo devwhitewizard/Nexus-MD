@@ -124,6 +124,35 @@ async function connectionLogic() {
         }
     }
 
+    // Helper to auto-sync live valid creds to .env so SESSION_ID is never stale
+    const syncSessionIdToEnv = (folder) => {
+        try {
+            const targetCredsPath = path.join(folder, "creds.json");
+            if (!fs.existsSync(targetCredsPath)) return;
+            const credsRaw = fs.readFileSync(targetCredsPath, "utf-8");
+            const credsObj = JSON.parse(credsRaw);
+            if (!credsObj || !credsObj.registered) return;
+
+            const base64Session = "Nexus~" + Buffer.from(credsRaw, "utf-8").toString("base64");
+            process.env.SESSION_ID = base64Session;
+
+            const envFile = fs.existsSync(path.join(process.cwd(), ".env"))
+                ? path.join(process.cwd(), ".env")
+                : (fs.existsSync(path.join(process.cwd(), "config.env")) ? path.join(process.cwd(), "config.env") : null);
+
+            if (envFile) {
+                let envContent = fs.readFileSync(envFile, "utf-8");
+                if (envContent.includes("SESSION_ID=")) {
+                    envContent = envContent.replace(/SESSION_ID=.*/g, `SESSION_ID=${base64Session}`);
+                } else {
+                    envContent += `\nSESSION_ID=${base64Session}\n`;
+                }
+                fs.writeFileSync(envFile, envContent, "utf-8");
+                console.log("🔄 Auto-synced active live session credentials to .env file!");
+            }
+        } catch (e) { }
+    };
+
     // 📦 SESSION ID AUTO-RESTORE & DUMMY CHECK
     const credsPath = path.join(authFolder, "creds.json");
     let hasExistingValidSession = false;
@@ -136,14 +165,15 @@ async function connectionLogic() {
                 hasExistingValidSession = true;
                 existingMeId = parsed.me?.id || null;
                 console.log("📦 Active live session found in session/creds.json. Preserving updated key ratchets.");
+                // Auto-sync valid on-disk creds to .env so .env stays updated
+                syncSessionIdToEnv(authFolder);
             }
         } catch (e) {
             console.log("⚠️ Existing creds.json is invalid or corrupted. Will restore from SESSION_ID...");
         }
     }
 
-    // If SESSION_ID is provided and differs from the on-disk session (different account),
-    // force a restore from SESSION_ID even if creds.json looks valid
+    // Preserve valid on-disk session over stale .env SESSION_ID unless force restore is explicitly set
     if (hasExistingValidSession && process.env.SESSION_ID && existingMeId) {
         try {
             let rawId = process.env.SESSION_ID.trim().replace(/^["']|["']$/g, "").trim();
@@ -152,12 +182,14 @@ async function connectionLogic() {
             let safeB64 = sessionPayload.replace(/-/g, "+").replace(/_/g, "/");
             while (safeB64.length % 4 !== 0) safeB64 += "=";
             const decoded = Buffer.from(safeB64, "base64").toString("utf-8");
-            // Quick me.id comparison
             const meMatch = decoded.match(/"id"\s*:\s*"([^"]+@s\.whatsapp\.net)"/);
             const sessionMeId = meMatch ? meMatch[1] : null;
-            if (sessionMeId && sessionMeId !== existingMeId) {
-                console.log(`📦 SESSION_ID account (${sessionMeId}) differs from on-disk session (${existingMeId}). Forcing SESSION_ID restore...`);
+            if (sessionMeId && sessionMeId !== existingMeId && process.env.SESSION_ID_FORCE_RESTORE === "true") {
+                console.log(`📦 SESSION_ID account (${sessionMeId}) differs from on-disk session (${existingMeId}). Force restore enabled.`);
                 hasExistingValidSession = false;
+            } else if (sessionMeId && sessionMeId !== existingMeId) {
+                console.log(`📦 Active on-disk session (${existingMeId}) preserved over stale SESSION_ID (${sessionMeId}). Auto-syncing .env...`);
+                syncSessionIdToEnv(authFolder);
             }
         } catch (e) { /* ignore, keep existing session */ }
     }
@@ -491,6 +523,9 @@ async function connectionLogic() {
             consecutiveFailures = 0; // Reset failure counter on successful connection
             global.botStartTime = Math.floor(Date.now() / 1000); // Unix seconds — ignore any message older than this
             console.log("✅ Bot connected and stable!");
+
+            // Auto-sync current active credentials to .env so SESSION_ID is always valid
+            syncSessionIdToEnv(authFolder);
 
             // Initialize Database (Centralized)
             const { initDb } = require("./nexus/db");
