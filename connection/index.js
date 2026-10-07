@@ -1,7 +1,7 @@
 const path = require("path");
 const { authFolder: rawAuthFolder, ownerNumbers } = require("../config");
 const { initAuthState } = require("./auth");
-const { resolveSessionId } = require("./session");
+const { resolveSessionId, clearSessionFlags } = require("./session");
 const { createWASocket, requestPairingCode, renderQrCode } = require("./socket");
 const { startWatchdog, stopWatchdog } = require("./watchdog");
 const reconnect = require("./reconnect");
@@ -120,8 +120,7 @@ async function startConnection() {
                 clearTimeout(connectionTimeout);
                 connectionTimeout = null;
             }
-            delete process.env.SESSION_ID_FAILED;
-            delete process.env.SESSION_ID_INVALID;
+            clearSessionFlags();
             global.isSockConnected = true;
             global.latestQr = null;
             isReconnecting = false;

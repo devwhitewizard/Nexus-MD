@@ -1,7 +1,7 @@
-const { default: makeWASocket, useMultiFileAuthState, delay } = require("@whiskeysockets/baileys");
 const fs = require("fs");
 const path = require("path");
-const pino = require("pino");
+const { initAuthState, generateSessionId } = require("../../connection/auth");
+const { createWASocket } = require("../../connection/socket");
 
 module.exports = {
     name: "pair",
@@ -16,30 +16,25 @@ module.exports = {
 
         const pairingId = `pair_${Date.now()}`;
         const tempSessionDir = path.join(__dirname, "../../tmp", pairingId);
-        
+
         await sock.sendMessage(jid, { text: "⏳ *Generating Pairing Code...* Please wait." });
 
         const NodeCache = require("node-cache");
         const msgRetryCounterCache = new NodeCache();
 
         try {
-            const { state, saveCreds } = await useMultiFileAuthState(tempSessionDir);
-            
-            const pairSock = makeWASocket({
-                auth: state,
-                printQRInTerminal: false,
-                logger: pino({ level: "silent" }),
+            const { state, saveCreds } = await initAuthState(tempSessionDir);
+
+            const pairSock = await createWASocket(state, {
                 browser: ["Ubuntu", "Chrome", "20.0.04"],
                 msgRetryCounterCache,
-                syncFullHistory: false,
-                linkPreviewHighQuality: false,
             });
 
             // 1. Request the code
             setTimeout(async () => {
                 try {
                     const code = await pairSock.requestPairingCode(targetNumber);
-                    
+
                     const pairingMsg = `💎 *NEXUS-1MD PAIRING* 💎\n\n` +
                                      `━━━━━━━━━━━━━━━━━━━\n` +
                                      `1. Open WhatsApp Settings\n` +
@@ -61,25 +56,27 @@ module.exports = {
             pairSock.ev.on("creds.update", saveCreds);
             pairSock.ev.on("connection.update", async (update) => {
                 const { connection } = update;
-                
+
                 if (connection === "open") {
                     // Small delay to let Baileys finalize cred writes (registered flag, keys, etc.)
                     await new Promise(resolve => setTimeout(resolve, 2000));
-                    const credsPath = path.join(tempSessionDir, "creds.json");
-                    let credsObj = JSON.parse(fs.readFileSync(credsPath, "utf-8"));
-                    // Ensure registered=true so the SESSION_ID restore logic accepts it
-                    credsObj.registered = true;
-                    const credsData = JSON.stringify(credsObj);
-                    const sessionId = "Nexus~" + Buffer.from(credsData).toString("base64");
 
-                    await sock.sendMessage(jid, { 
+                    const result = generateSessionId(tempSessionDir);
+                    if (!result) {
+                        console.error("Pairing Error: could not read temporary credentials.");
+                        return;
+                    }
+
+                    const { sessionId } = result;
+
+                    await sock.sendMessage(jid, {
                         text: `✅ *Session Generated!*\nCopy the code below:`
                     });
 
                     // Send ID as separate message for 1-tap copy
                     await sock.sendMessage(jid, { text: sessionId });
 
-                    await sock.sendMessage(jid, { 
+                    await sock.sendMessage(jid, {
                         text: `💎 *How to use:* \n1. Copy the code above.\n2. Paste it as \`SESSION_ID\` in your Render/Heroku environment variables.`
                     });
 

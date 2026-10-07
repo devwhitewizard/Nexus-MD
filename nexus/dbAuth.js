@@ -1,7 +1,6 @@
 const { BufferJSON, initAuthCreds, proto } = require("@whiskeysockets/baileys");
 const { DataTypes } = require("sequelize");
 const { sequelize, isOnline } = require("./db");
-const { useMultiFileAuthState } = require("@whiskeysockets/baileys");
 
 let BaileysAuth = null;
 
@@ -23,23 +22,26 @@ if (sequelize) {
 /**
  * Custom database-backed state provider for Baileys.
  * Saves credentials, prekeys, sessions, and sender keys directly to SQLite or Postgres database.
- * If the database connection is offline, automatically falls back to standard file-system state.
- * 
+ *
+ * This is a pure DB provider — it does NOT fall back to filesystem auth.
+ * The caller (connection/auth.js) is responsible for fallback logic.
+ *
+ * Returns null if the database is unavailable, allowing the caller to fall back.
+ *
  * @param {string} sessionName - Unique namespace prefix for the keys
+ * @returns {Promise<object|null>} - Baileys auth state object, or null if DB unavailable
  */
 async function useDatabaseAuthState(sessionName = "session") {
-    // If DB is offline, fall back to standard file-system state
     if (!BaileysAuth || !isOnline()) {
-        console.log("💾 Database is offline/unavailable. Falling back to useMultiFileAuthState.");
-        return useMultiFileAuthState(sessionName);
+        return null;
     }
 
     // Sync table schema first to ensure the table exists
     try {
         await BaileysAuth.sync();
     } catch (e) {
-        console.error("❌ Failed to synchronize BaileysAuth schema, falling back to file auth:", e.message);
-        return useMultiFileAuthState(sessionName);
+        console.error("❌ Failed to synchronize BaileysAuth schema:", e.message);
+        return null;
     }
 
     const writeData = async (data, keyId) => {

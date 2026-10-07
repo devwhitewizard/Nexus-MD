@@ -181,9 +181,20 @@ function resolveSessionId() {
     }
 }
 
+/**
+ * Clears SESSION_ID lifecycle flags from process.env.
+ * Called when a fresh connection succeeds so stale failure/invalid
+ * markers do not suppress QR or pairing flows on the next boot.
+ */
+function clearSessionFlags() {
+    delete process.env.SESSION_ID_FAILED;
+    delete process.env.SESSION_ID_INVALID;
+}
+
 module.exports = {
     checkExistingSession,
     parseSessionId,
     bootstrapSession,
-    resolveSessionId
+    resolveSessionId,
+    clearSessionFlags
 };

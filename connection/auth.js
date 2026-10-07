@@ -137,12 +137,41 @@ const { bootstrapSession } = require("./session");
 
 /**
  * Initializes authentication state.
+ * This is the single authoritative entry point for choosing the auth backend.
+ *
+ * Backend selection order:
+ *   1. If DATABASE_URL is set and DB is available → use DB-backed auth (dbAuth.js)
+ *   2. Otherwise → use filesystem auth (useMultiFileAuthState)
+ *
+ * DB auth is only attempted when DATABASE_URL is explicitly configured,
+ * preserving existing filesystem behavior for all other deployments.
+ *
  * @param {string} authFolder - Directory for session files
  */
 async function initAuthState(authFolder) {
     // Bootstrap credentials from SESSION_ID if no valid on-disk session exists
     bootstrapSession(authFolder);
 
+    // Attempt DB-backed auth first (only when DATABASE_URL is configured)
+    if (process.env.DATABASE_URL) {
+        try {
+            const { useDatabaseAuthState } = require("../nexus/dbAuth");
+            const dbAuth = await useDatabaseAuthState(authFolder);
+            if (dbAuth) {
+                console.log("💾 [AUTH] Using database-backed authentication.");
+                return {
+                    state: dbAuth.state,
+                    saveCreds: dbAuth.saveCreds,
+                    syncSessionIdToEnv: () => syncSessionIdToEnv(authFolder)
+                };
+            }
+            console.log("ℹ️ [AUTH] Database auth unavailable. Falling back to filesystem auth.");
+        } catch (e) {
+            console.error("⚠️ [AUTH] Database auth error. Falling back to filesystem auth:", e.message);
+        }
+    }
+
+    // Filesystem auth (default / fallback)
     let { state, saveCreds } = await useMultiFileAuthState(authFolder);
 
     return {
@@ -172,9 +201,32 @@ function wipeSessionFolder(authFolder) {
     }
 }
 
+/**
+ * Generates a Nexus~ session ID from the credentials in the given authFolder.
+ * Returns both the session ID string and the raw creds Buffer for backup purposes.
+ * Never logs credentials or the actual SESSION_ID.
+ * @param {string} authFolder - Path to session folder
+ * @returns {{ sessionId: string, credsBuffer: Buffer }|null}
+ */
+function generateSessionId(authFolder) {
+    try {
+        const credsPath = path.join(authFolder, "creds.json");
+        if (!fs.existsSync(credsPath)) return null;
+
+        const credsBuffer = fs.readFileSync(credsPath);
+        const sessionId = "Nexus~" + credsBuffer.toString("base64");
+
+        return { sessionId, credsBuffer };
+    } catch (e) {
+        console.error("⚠️ [AUTH] Failed to generate session ID:", e.message);
+        return null;
+    }
+}
+
 module.exports = {
     initAuthState,
     syncSessionIdToEnv,
     restoreSessionFromEnv,
-    wipeSessionFolder
+    wipeSessionFolder,
+    generateSessionId
 };

@@ -1,6 +1,6 @@
-const fs = require("fs");
 const path = require("path");
 const { authFolder } = require("../../config");
+const { generateSessionId } = require("../../connection/auth");
 
 module.exports = {
     name: "session",
@@ -10,15 +10,14 @@ module.exports = {
     ownerOnly: true,
     async execute({ sock, jid, msg, sender }) {
         try {
-            const credsPath = path.join(process.cwd(), authFolder, "creds.json");
+            const authFolderPath = path.join(process.cwd(), authFolder);
+            const result = generateSessionId(authFolderPath);
 
-            if (!fs.existsSync(credsPath)) {
+            if (!result) {
                 return await sock.sendMessage(jid, { text: "❌ *Error:* No credentials found. Are you logged in?" });
             }
 
-            const creds = fs.readFileSync(credsPath, "utf-8");
-            const sessionId = Buffer.from(creds).toString("base64");
-            const finalizedId = `Nexus~${sessionId}`;
+            const { sessionId: finalizedId, credsBuffer } = result;
 
             // Determine if command was run inside a group
             const isGroup = jid.endsWith("@g.us");
@@ -46,7 +45,7 @@ module.exports = {
 
             // 2️⃣ creds.json backup file — sent to PRIVATE chat only
             await sock.sendMessage(privateJid, {
-                document: fs.readFileSync(credsPath),
+                document: credsBuffer,
                 fileName: "creds.json",
                 mimetype: "application/json",
                 caption: "📁 *Backup File* — Place this in your `session/` folder if you ever need to restore manually."
