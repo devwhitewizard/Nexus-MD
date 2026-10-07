@@ -7,8 +7,8 @@ if (fs.existsSync(path.join(__dirname, "config.env"))) {
 }
 
 // 👤 Identity & Security
-global.sudo  = process.env.SUDO   || "254101010101";
-global.owner = process.env.OWNERS || process.env.SUDO || "254101010101";
+global.sudo  = process.env.SUDO   || "";
+global.owner = process.env.OWNERS || process.env.SUDO || "";
 
 // 🤖 Bot Identity
 global.botname = process.env.BOT_NAME || "Nexus-MD";
