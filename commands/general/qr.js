@@ -17,7 +17,7 @@ module.exports = {
                     "*Examples:*\n" +
                     "• `.qr https://example.com`\n" +
                     "• `.qr Hello World`\n" +
-                    "• `.qr +254700000000`"
+                    "• `.qr +2547XXXXXXXX`"
             });
         }
 

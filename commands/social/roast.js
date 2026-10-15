@@ -46,7 +46,7 @@ module.exports = {
 
         let targetJid = contextInfo?.mentionedJid?.[0] || contextInfo?.participant || null;
 
-        // If no mention/reply, try args (e.g. .roast 254712345678)
+        // If no mention/reply, try args (e.g. .roast 2547XXXXXXXX)
         if (!targetJid && args && args[0] && !args[0].startsWith(".")) {
             const argStr = args[0].replace("@", "").replace(/\D/g, "");
             if (argStr.length > 5) {

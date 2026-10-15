@@ -31,7 +31,7 @@
       "type": "string"
     },
     "SUDO": {
-      "description": "Primary Super-Admin phone number with country code (e.g. 254797715445).",
+      "description": "Primary Super-Admin phone number with country code (e.g. 2547XXXXXXXX).",
       "required": true,
       "type": "string"
     },

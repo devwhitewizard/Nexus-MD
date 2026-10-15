@@ -64,7 +64,7 @@ To configure Nexus-1MD, duplicate the `.env.example` file, rename it to `config.
 
 | Variable | Description | Mandatory | Default |
 | :--- | :--- | :--- | :--- |
-| `SUDO` | Primary manager WhatsApp number with country code (e.g., `254712345678`) | **YES** | - |
+| `SUDO` | (Optional) Super-Admin WhatsApp number with country code (e.g., `2547XXXXXXXX`) | No | - |
 | `OWNERS` | Comma-separated list of secondary owner numbers | No | - |
 | `SESSION_ID` | Base64 gzip-compressed session credentials fallback string | No | - |
 | `PAIRING_NUMBER` | Number with country code to request pairing codes instead of QR | No | - |
@@ -101,7 +101,7 @@ Click the button below to instantly deploy **Nexus-1MD** on Heroku:
 #### 3. Configure Environment Variables
 In the Heroku app configuration form, fill in:
 - `SESSION_ID` (**Required**): Paste your generated session string.
-- `SUDO` (**Required**): Primary manager WhatsApp number with country code (e.g. `254712345678`).
+- `SUDO` (Optional): Super-Admin WhatsApp number with country code (e.g. `2547XXXXXXXX`). When unset, owner access uses `OWNERS` and the paired account.
 - `PREFIX` (Optional): Command prefix (default is `.`).
 - `MODE` (Optional): `public` or `private`.
 - `HEROKU_APP_NAME` (Optional): Your app name for automated `.update` command support.
@@ -164,7 +164,7 @@ Fork or push this repository to your own GitHub account.
 In the **Environment** settings tab, add the following variables:
 - `SESSION_ID`: The base64 gzip-compressed session credentials string (e.g. `NEXUS~...`) generated in your local console when you ran the bot and logged in.
 - `PORT`: Set to `10000` (Render's default web service port).
-- `SUDO`: Your primary WhatsApp manager number (e.g., `254712345678`).
+- `SUDO`: (Optional) Super-Admin manager number (e.g., `2547XXXXXXXX`).
 
 ### 5. Keep Alive (Prevent Sleep)
 Render's Free Tier spins down web services if there is no inbound traffic for 15 minutes.

@@ -22,10 +22,9 @@ module.exports = {
         if (owners.length > 0) {
             owners.forEach((ownerJid, idx) => {
                 const number = ownerJid.split("@")[0];
-                const role = idx === 0 ? "Primary Owner (SUDO)" : "Administrator";
-                const link = idx === 0 ? "https://wa.me/whitewizard001" : `https://wa.me/${number}`;
-                const userText = idx === 0 ? " (@whitewizard001)" : "";
-                contactText += `👤 *${role}:${userText}*\n` +
+                const role = idx === 0 ? "Primary Owner" : "Administrator";
+                const link = `https://wa.me/${number}`;
+                contactText += `👤 *${role}:*\n` +
                                `👉 ${link}\n\n`;
             });
         } else {

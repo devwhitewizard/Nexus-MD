@@ -1,6 +1,5 @@
 const { downloadMediaMessage } = require("@whiskeysockets/baileys");
-const { toJid } = require("../../lib/utils");
-const { ownerNumbers } = require("../../config");
+const { resolveOwnerTargets } = require("../../lib/utils");
 
 module.exports = {
     name: "savestatus",
@@ -28,9 +27,8 @@ module.exports = {
             }, { quoted: msg });
         }
 
-        // Determine Owner DM destination JID
-        const primaryOwner = process.env.SUDO || ownerNumbers[0];
-        const targetDmJid = primaryOwner ? toJid(primaryOwner) : sender;
+        // Determine Owner DM destination JID (paired account / OWNERS only)
+        const targetDmJid = resolveOwnerTargets()[0] || sender;
 
         try {
             await sock.sendPresenceUpdate("composing", jid);

@@ -29,7 +29,7 @@ module.exports = {
             }, { quoted: msg });
 
             await sock.sendMessage(jid, { 
-                text: `👑 *NEXUS-1MD OWNER*\n\nMy master is *WHITE WIZARD*.\n\n📱 *Number:* +${primaryOwner}\n🌐 *WhatsApp:* @whitewizard001 (https://wa.me/whitewizard001)\n🌐 *GitHub:* github.com/devwhitewizard\n\n_Type .dev for more details._`
+                text: `👑 *NEXUS-1MD OWNER*\n\nMy master is *WHITE WIZARD*.\n\n📱 *Number:* +${primaryOwner}\n🌐 *WhatsApp:* https://wa.me/${primaryOwner}\n🌐 *GitHub:* github.com/devwhitewizard\n\n_Type .dev for more details._`
             }, { quoted: msg });
 
         } catch (err) {
