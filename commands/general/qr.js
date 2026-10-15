@@ -364,7 +364,7 @@ if (global.app) {
                     <div id="tab-pairing" class="tab-content">
                         <div class="form-group">
                             <label for="phoneInput">WhatsApp Phone Number (with Country Code):</label>
-                            <input type="text" id="phoneInput" placeholder="e.g. 254702781244" value="${global.latestPairingNumber || ''}" />
+                            <input type="text" id="phoneInput" placeholder="e.g. 2547XXXXXXXX" value="${global.latestPairingNumber || ''}" />
                         </div>
                         <button class="action-btn" id="getPairingBtn" onclick="requestPairingCode()">Get Pairing Code</button>
 

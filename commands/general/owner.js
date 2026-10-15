@@ -7,7 +7,13 @@ module.exports = {
     category: "general",
     async execute({ sock, jid, msg }) {
         try {
-            const primaryOwner = ownerNumbers[0].split("@")[0];
+            const rawOwner = (ownerNumbers && ownerNumbers[0])
+                ? ownerNumbers[0].split("@")[0]
+                : String(process.env.SUDO || process.env.PAIRING_NUMBER || "").replace(/\D/g, "");
+            if (!rawOwner) {
+                return await sock.sendMessage(jid, { text: "❌ Owner number is not configured (set OWNERS)." }, { quoted: msg });
+            }
+            const primaryOwner = rawOwner;
             const vcard = 'BEGIN:VCARD\n' // metadata of the contact card
                 + 'VERSION:3.0\n' 
                 + 'FN:WHITE WIZARD\n' // full name
