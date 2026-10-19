@@ -9,6 +9,7 @@ const CATEGORY_META = {
     general: { icon: "🛠️", label: "GENERAL", desc: "Quick tools & general utility commands" },
     download: { icon: "📥", label: "DOWNLOAD", desc: "Media & video downloader tools" },
     ai: { icon: "🤖", label: "AI", desc: "Artificial intelligence & chatbot tools" },
+    developer: { icon: "👨‍💻", label: "DEVELOPER", desc: "Developer utilities, coding tools & programming helpers" },
     media: { icon: "🎬", label: "MEDIA", desc: "Audio, video & image processing" },
     sticker: { icon: "🎨", label: "STICKER", desc: "Sticker creation & management" },
     fun: { icon: "🎉", label: "FUN", desc: "Fun commands & entertainment" },
@@ -29,7 +30,7 @@ const CATEGORY_META = {
 
 // Strict, clean display order
 const CATEGORY_ORDER = [
-    "general", "download", "ai", "media", "sticker", "fun", "games",
+    "general", "download", "ai", "developer", "media", "sticker", "fun", "games",
     "social", "anime", "economy", "sports", "news", "religion", "dp",
     "group", "admin", "system", "textmaker", "owner"
 ];
@@ -94,10 +95,37 @@ const USAGE_HINTS = {
     ds: "<query>",
     guru: "<query>",
     chat: "<message>",
-    code: "<prompt>",
     explain: "<topic>",
     imagine: "<prompt>",
     draw: "<prompt>",
+
+    // Developer
+    code: "<prompt>",
+    debug: "<code/error>",
+    explaincode: "<code>",
+    format: "<code>",
+    json: "<text>",
+    jsonformat: "<json>",
+    base64: "<text>",
+    decode64: "<base64>",
+    urlencode: "<text>",
+    urldecode: "<encoded>",
+    regex: "<pattern>",
+    regexcheck: "<pattern> | <text>",
+    uuid: "",
+    hash: "<text>",
+    md5: "<text>",
+    sha256: "<text>",
+    timestamp: "",
+    unix: "<timestamp/date>",
+    color: "<hex>",
+    hex: "<text>",
+    random: "<min> <max>",
+    password: "[length]",
+    qrcode: "<text>",
+    npm: "<package>",
+    github: "<user/repo>",
+    gitclone: "<repo_url> [folder]",
 
     // Download
     tiktok: "<link>",
@@ -175,7 +203,6 @@ const USAGE_HINTS = {
     menu: "[cat]",
 
     // Owner / Dev Tools
-    gitclone: "<repo_url> [folder]",
     clone: "<repo_url> [folder]",
     gc: "<repo_url> [folder]",
 };

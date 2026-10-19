@@ -5,8 +5,8 @@ const os = require('os');
 const { execSync } = require('child_process');
 
 module.exports = {
-    name: "gitclone",
-    aliases: ["clone", "gc", "github"],
+    name: "clone",
+    aliases: ["gc"],
     description: "Download a GitHub/Git repository and send it to WhatsApp as a ZIP document.",
     category: "owner",
     isOwnerOnly: true,

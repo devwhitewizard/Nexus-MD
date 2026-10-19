@@ -5,7 +5,7 @@ const os = require("os");
 
 module.exports = {
     name: "qr",
-    aliases: ["qrcode", "genqr", "makeqr"],
+    aliases: ["genqr", "makeqr"],
     description: "Generate a QR code from text or a URL.",
     category: "general",
     execute: async ({ sock, jid, args, msg }) => {

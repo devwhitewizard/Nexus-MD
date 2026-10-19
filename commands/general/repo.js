@@ -3,7 +3,7 @@ const path = require("path");
 
 module.exports = {
     name: "repo",
-    aliases: ["github", "source", "script"],
+    aliases: ["source", "script"],
     description: "Get the bot's source code repository link.",
     category: "general",
     execute: async ({ sock, jid, msg }) => {
