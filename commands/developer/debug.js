@@ -1,4 +1,5 @@
 const { askAI, checkAILimit } = require("../../lib/aiHelper");
+const { clipText } = require("../../lib/devSafety");
 
 module.exports = {
     name: "debug",
@@ -43,13 +44,14 @@ module.exports = {
             }
 
             await sock.sendMessage(jid, { react: { text: "🐛", key: msg.key } });
+            await sock.sendMessage(jid, { text: "🐛 Analyzing... ⏳" });
 
             const userPrompt = `Help me debug this code or error message:\n\n${input}`;
             const result = await askAI(userPrompt, system);
 
             const header = `┌───[ 🐛 DEBUG ]\n└────────────────────\n\n`;
             await sock.sendMessage(jid, {
-                text: header + result
+                text: header + clipText(result)
             }, { quoted: msg });
 
         } catch (err) {

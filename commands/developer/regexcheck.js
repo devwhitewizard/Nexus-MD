@@ -21,6 +21,11 @@ module.exports = {
                 text: "❌ Missing pattern or text\n\nUsage:\n.regexcheck ^[0-9]+$ | 12345"
             });
         }
+        if (pattern.length > 300 || text.length > 1000) {
+            return await sock.sendMessage(jid, {
+                text: "❌ Input too long (pattern max 300, text max 1000 characters)."
+            });
+        }
 
         try {
             const regex = new RegExp(pattern);

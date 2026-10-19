@@ -1,4 +1,5 @@
 const { askAI, checkAILimit } = require("../../lib/aiHelper");
+const { clipText } = require("../../lib/devSafety");
 
 module.exports = {
     name: "explaincode",
@@ -43,13 +44,14 @@ module.exports = {
             }
 
             await sock.sendMessage(jid, { react: { text: "📖", key: msg.key } });
+            await sock.sendMessage(jid, { text: "📖 Explaining code... ⏳" });
 
             const userPrompt = `Explain this source code:\n\n${input}`;
             const result = await askAI(userPrompt, system);
 
             const header = `┌───[ 📖 EXPLAINCODE ]\n└────────────────────\n\n`;
             await sock.sendMessage(jid, {
-                text: header + result
+                text: header + clipText(result)
             }, { quoted: msg });
 
         } catch (err) {

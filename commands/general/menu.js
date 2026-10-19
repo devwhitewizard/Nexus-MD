@@ -384,7 +384,6 @@ module.exports = {
                 });
 
                 body += `💡 *How to explore commands:*\n`;
-                body += `▸ Reply with a number (e.g. *1* or *02*)\n`;
                 body += `▸ Type *.menu <category>* (e.g. *.menu download*)\n`;
                 body += `▸ Type *.menu <command>* (e.g. *.menu ping*)\n`;
                 body += `▸ Change menu layout: *.menustyle 2*`;

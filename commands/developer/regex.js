@@ -11,6 +11,9 @@ module.exports = {
                 text: "❌ Missing input\n\nUsage:\n.regex ^[A-Z][a-z]+$\n\nExample:\n.regex ^[A-Z][a-z]+$"
             });
         }
+        if (pattern.length > 300) {
+            return await sock.sendMessage(jid, { text: "❌ Pattern too long (max 300 characters)." });
+        }
 
         try {
             const regex = new RegExp(pattern);

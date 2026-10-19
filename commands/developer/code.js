@@ -1,4 +1,5 @@
 const { askCode, checkAILimit } = require("../../lib/aiHelper");
+const { clipText } = require("../../lib/devSafety");
 
 module.exports = {
     name: "code",
@@ -32,12 +33,13 @@ module.exports = {
             }
 
             await sock.sendMessage(jid, { react: { text: "👨‍💻", key: msg.key } });
+            await sock.sendMessage(jid, { text: "👨‍💻 Writing code... ⏳" });
 
             const result = await askCode(prompt);
 
             const header = `┌───[ 👨‍💻 CODE ]\n│ Language: auto\n└────────────────────\n\n`;
             await sock.sendMessage(jid, {
-                text: header + result
+                text: header + clipText(result)
             }, { quoted: msg });
 
         } catch (err) {

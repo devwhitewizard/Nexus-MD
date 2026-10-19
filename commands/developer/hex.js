@@ -1,4 +1,5 @@
-const { Buffer } = require("buffer");
+const Buffer = require("buffer").Buffer;
+const { clipText, inputTooLong, MAX_INPUT_CHARS } = require("../../lib/devSafety");
 
 module.exports = {
     name: "hex",
@@ -7,21 +8,27 @@ module.exports = {
     usage: "<text>",
     aliases: [],
     execute: async ({ sock, jid, msg, args }) => {
-        const text = args.join(" ").trim();
-        if (!text || text.length === 0) {
+        const raw = args.join(" ").trim();
+        if (!raw) {
             return await sock.sendMessage(jid, {
                 text: "❌ Missing input\n\nUsage:\n.hex hello"
             });
         }
+        if (inputTooLong(raw)) {
+            return await sock.sendMessage(jid, {
+                text: `❌ Input too long (max ${MAX_INPUT_CHARS} characters).`
+            });
+        }
 
         try {
-            const hex = Buffer.from(text, "utf8").toString("hex");
+            const input = raw.slice(0, MAX_INPUT_CHARS);
+            const hex = Buffer.from(input, "utf8").toString("hex");
             await sock.sendMessage(jid, {
-                text: `┌───[ 👨‍💻 HEX ]\n│ Input: \`${text}\`\n│\n│ Hex: ${hex}\n└────────────────────`
-            });
+                text: clipText(`┌───[ 👨‍💻 HEX ]\n│ Input: \`${input}\`\n│\n│ Hex:\n${hex}\n└────────────────────`)
+            }, { quoted: msg });
         } catch (error) {
             await sock.sendMessage(jid, {
-                text: "❌ Conversion error:\n```" + error.message + "```"
+                text: `❌ Conversion error:\n\`${error.message}\``
             });
         }
     }

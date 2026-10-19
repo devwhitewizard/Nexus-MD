@@ -1,70 +1,86 @@
+const { clipText, inputTooLong, MAX_INPUT_CHARS } = require("../../lib/devSafety");
+
 module.exports = {
     name: "format",
     description: "Beautify/format source code",
     category: "developer",
     usage: "<code>",
     aliases: [],
-    execute: async ({ sock, jid, msg, args, text }) => {
-        const codeInput = args.join(" ");
-        if (!codeInput || codeInput.trim().length === 0) {
+    execute: async ({ sock, jid, msg, args }) => {
+        const input = args.join(" ").trim();
+        if (!input) {
             return await sock.sendMessage(jid, {
-                text: "❌ Missing input\n\nUsage:\n.format <code>\n\nExample:\n.format const x = 1;\nconsole.log(x);"
+                text: "❌ Missing input\n\nUsage:\n.format <code>\n\nExamples:\n• .format {\"a\":1}\n• .format CSS/JS/HTML snippet"
+            });
+        }
+        if (inputTooLong(input)) {
+            return await sock.sendMessage(jid, {
+                text: `❌ Input too long (max ${MAX_INPUT_CHARS} characters).`
             });
         }
 
-        const input = codeInput.trim();
-        let formatted;
+        const code = input.slice(0, MAX_INPUT_CHARS);
 
-        // Try JSON first
-        try {
-            const parsed = JSON.parse(input);
-            formatted = JSON.stringify(parsed, null, 2);
-            await sock.sendMessage(jid, {
-                text: `┌───[ 👨‍💻 FORMAT ]\n│ Format: JSON\n│\n\`\`\`\n${formatted}\n\`\`\``
-            });
-            return;
-        } catch (e) {
-            // Not valid JSON, continue to other formats
+        // ── JSON: deterministic formatter ────────────────────────────────────
+        if (/^[\[{]/.test(code) && /[\]}]$/.test(code)) {
+            try {
+                const parsed = JSON.parse(code);
+                await sock.sendMessage(jid, {
+                    text: `┌───[ 👨‍💻 FORMAT ]\n│ Format: JSON\n└────────────────────\n\n\`\`\`json\n${clipText(JSON.stringify(parsed, null, 2), 3000)}\n\`\`\``
+                }, { quoted: msg });
+                return;
+            } catch (e) { /* fall through to other formats */ }
         }
 
-        // Check for HTML
-        if (input.includes("<html") || input.includes("<div") || input.includes("<span") || input.includes("<p")) {
-            // Basic HTML formatting - just pretty print with indentation
-            const htmlLines = input.split(/\n/);
-            let indentLevel = 0;
-            let result = "";
-            const htmlTags = /<([a-zA-Z/!][1-6]?)[^>]*>/g;
-
-            for (const line of htmlLines) {
-                const stripped = line.replace(/^\s+/, "");
-                const indent = stripped.match(/^\s*/)?.[0].length || 0;
-                result += " ".repeat(indent * 2) + stripped + "\n";
-            }
-
+        // ── HTML: normalize spacing per line ─────────────────────────────────
+        if (/<\/?(html|body|head|div|span|p|nav|section|ul|ol|li|a|button|table|tr|td|h[1-6])\b/i.test(code)) {
+            const lines = code.split(/\r?\n/).slice(0, 300);
+            const result = lines
+                .map(line => line.replace(/[ \t]+/g, " ").trim())
+                .filter(Boolean)
+                .join("\n");
             await sock.sendMessage(jid, {
-                text: `┌───[ 👨‍💻 FORMAT ]\n│ Format: HTML\n│\n\`\`\`html\n${result}\n\`\`\``
-            });
+                text: `┌───[ 👨‍💻 FORMAT ]\n│ Format: HTML\n└────────────────────\n\n\`\`\`html\n${clipText(result, 3000)}\n\`\`\``
+            }, { quoted: msg });
             return;
         }
 
-        // Check for CSS
-        if (input.includes("{") && input.includes("}") && (input.includes("color") || input.includes("font") || input.includes("padding") || input.includes("margin"))) {
-            // Basic CSS formatting
-            const cssLines = input.split(/\n/);
-            let result = cssLines.map(line => "  " + line.trim()).join("\n");
+        // ── CSS: normalize into "selector { property: value; }" lines ───────
+        if (/\{[^}]*:[^}]*\}/.test(code) && /(?:color|font|padding|margin|background|border|width|height|display)\s*:/i.test(code)) {
+            const blocks = code.split(/\r?\n/).reduce((acc, line) => {
+                acc.push(line.trim());
+                return acc;
+            }, []).join("\n")
+                .replace(/\{/g, "\n{\n")
+                .replace(/\}/g, "\n}\n")
+                .replace(/;/g, ";\n")
+                .split("\n").map(s => s.trim()).filter(Boolean);
+            let depth = 0;
+            const css = blocks.map(part => {
+                if (part === "}") { depth = Math.max(0, depth - 1); return "}"; }
+                if (part === "{") return "{";
+                return "  ".repeat(Math.min(depth, 6)) + part;
+            }).join("\n");
             await sock.sendMessage(jid, {
-                text: `┌───[ 👨‍💻 FORMAT ]\n│ Format: CSS\n│\n\`\`\`css\n${result}\n\`\`\``
-            });
+                text: `┌───[ 👨‍💻 FORMAT ]\n│ Format: CSS\n└────────────────────\n\n\`\`\`css\n${clipText(css, 3000)}\n\`\`\``
+            }, { quoted: msg });
             return;
         }
 
-        // Basic JavaScript formatting - add indentation
-        // Simple approach: indent lines that look like code statements
-        const jsLines = input.split(/\n/);
-        let result = jsLines.map(line => "  " + (line.trim() || line)).join("\n");
-
+        // ── JavaScript: clean 2-space brace-depth indent ─────────────────────
+        let depth = 0;
+        const jsOut = code.split(/\r?\n/).slice(0, 300).map(line => {
+            const trimmed = line.trim();
+            if (!trimmed) return "";
+            let indent = depth;
+            if (trimmed.startsWith("}")) indent = Math.max(0, depth - 1);
+            const opens = (trimmed.match(/\{/g) || []).length;
+            const closes = (trimmed.match(/\}/g) || []).length;
+            depth = Math.max(0, Math.min(10, depth + opens - closes));
+            return "  ".repeat(Math.min(indent, 10)) + trimmed;
+        }).join("\n");
         await sock.sendMessage(jid, {
-            text: `┌───[ 👨‍💻 FORMAT ]\n│ Format: JavaScript\n│\n\`\`\`js\n${result}\n\`\`\``
-        });
+            text: `┌───[ 👨‍💻 FORMAT ]\n│ Format: JavaScript\n└────────────────────\n\n\`\`\`js\n${clipText(jsOut, 3000)}\n\`\`\``
+        }, { quoted: msg });
     }
 };
