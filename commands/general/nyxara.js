@@ -12,8 +12,9 @@ module.exports = {
                          `━━━━━━━━━━━━━━━━━━━━━━━━━\n\n` +
                          `✨ *Name:* Nyxara  Nerio\n` +
                          `📱 *WhatsApp:* @nyxara\n` +
+                         `📱 *PhoneNo:* 254141390246\n` +
                          `👨‍💻 *Bio:* My passion and only purpose here is coding. I love building tools that make life easier and more fun!\n\n` +
-                         `🌐 *Portfolio:* https://my-portfolio-yjx7.vercel.app/\n` +
+                         `🌐 *Portfolio:* https://portfolio-frontend-ecru-kappa.vercel.app/\n` +
                          `📂 *GitHub:* https://github.com/whicklian\n\n` +
                          `⏳ *TIME: THE ULTIMATE TRACER*\n` +
                          `_\"Magic is just science we don't understand yet, and code is the closest thing to magic I've found.\"_`;
