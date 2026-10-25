@@ -1,16 +1,19 @@
 const axios = require("axios");
 
+// Moved from commands/general/tts.js — same implementation, now in the
+// SOUND category. Added the `.voice` alias so `.voice` reuses this exact TTS
+// implementation instead of creating a second one.
 module.exports = {
     name: "tts",
-    aliases: ["texttospeech", "speech"],
+    aliases: ["voice", "texttospeech", "speech"],
     description: "Convert text to speech (audio voice note)",
-    category: "general",
+    category: "sound",
     execute: async (ctx) => {
         const { sock, jid, args, msg } = ctx;
 
         if (args.length === 0) {
-            return await sock.sendMessage(jid, { 
-                text: "⚠️ *Usage:* `.tts <text>` or `.tts <lang_code> <text>`\n\n*Examples:*\n▸ `.tts Hello World` (English default)\n▸ `.tts fr Bonjour` (French)\n▸ `.tts es Hola` (Spanish)" 
+            return await sock.sendMessage(jid, {
+                text: "⚠️ *Usage:* `.tts <text>` or `.tts <lang_code> <text>`\n\n*Examples:*\n▸ `.voice Hello World` (English default)\n▸ `.tts fr Bonjour` (French)\n▸ `.tts es Hola` (Spanish)"
             }, { quoted: msg });
         }
 
@@ -32,14 +35,14 @@ module.exports = {
         try {
             await sock.sendMessage(jid, { text: "⏳ Generating audio note..." }, { quoted: msg });
             const url = `https://translate.google.com/translate_tts?ie=UTF-8&tl=${lang}&client=tw-ob&q=${encodeURIComponent(text)}`;
-            
+
             const response = await axios.get(url, { responseType: "arraybuffer" });
             const buffer = Buffer.from(response.data, "binary");
 
-            await sock.sendMessage(jid, { 
-                audio: buffer, 
-                mimetype: "audio/mp4", 
-                ptt: true 
+            await sock.sendMessage(jid, {
+                audio: buffer,
+                mimetype: "audio/mp4",
+                ptt: true
             }, { quoted: msg });
         } catch (error) {
             console.error("❌ TTS Error:", error);

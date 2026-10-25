@@ -10,6 +10,7 @@ const CATEGORY_META = {
     download: { icon: "📥", label: "DOWNLOAD", desc: "Media & video downloader tools" },
     ai: { icon: "🤖", label: "AI", desc: "Artificial intelligence & chatbot tools" },
     developer: { icon: "👨‍💻", label: "DEVELOPER", desc: "Developer utilities, coding tools & programming helpers" },
+    sound: { icon: "🔊", label: "SOUND", desc: "Audio tools, voice conversion & sound processing" },
     media: { icon: "🎬", label: "MEDIA", desc: "Audio, video & image processing" },
     sticker: { icon: "🎨", label: "STICKER", desc: "Sticker creation & management" },
     fun: { icon: "🎉", label: "FUN", desc: "Fun commands & entertainment" },
@@ -30,7 +31,7 @@ const CATEGORY_META = {
 
 // Strict, clean display order
 const CATEGORY_ORDER = [
-    "general", "download", "ai", "developer", "media", "sticker", "fun", "games",
+    "general", "download", "ai", "developer", "sound", "media", "sticker", "fun", "games",
     "social", "anime", "economy", "sports", "news", "religion", "dp",
     "group", "admin", "system", "textmaker", "owner"
 ];
@@ -141,6 +142,19 @@ const USAGE_HINTS = {
     li: "<link>",
     play: "<song>",
     yt: "<link>",
+
+    // Sound (reply-based audio tools — no args unless shown)
+    sauce: "",
+    shazam: "",
+    song: "<name>",
+    vocal: "",
+    bass: "[boost dB]",
+    speed: "<x>",
+    pitch: "<x>",
+    reverse: "",
+    audio: "",
+    toaudio: "",
+    tovoice: "",
 
     // Admin & Group
     kick: "<user>",

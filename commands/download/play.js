@@ -2,7 +2,7 @@ const mediaApi = require("../../lib/mediaApi");
 
 module.exports = {
     name: "play",
-    aliases: ["song", "music"],
+    aliases: ["music"],
     description: "Search and download music.",
     category: "download",
     cooldown: 15000,

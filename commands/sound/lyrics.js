@@ -1,16 +1,18 @@
 const mediaApi = require("../../lib/mediaApi");
 
+// Moved from commands/media/lyrics.js — same implementation, now in the
+// SOUND category (still powered by lib/mediaApi.getLyrics).
 module.exports = {
     name: "lyrics",
     aliases: ["lyric", "songlyrics"],
     description: "Get the lyrics for a song.",
-    category: "media",
+    category: "sound",
     cooldown: 5000,
     execute: async ({ sock, jid, args, msg }) => {
         const query = args.join(" ");
         if (!query) {
-            return await sock.sendMessage(jid, { 
-                text: "❓ *Usage:* `.lyrics <song name>`\n\n*Examples:*\n• `.lyrics Blinding Lights`\n• `.lyrics Perfect Ed Sheeran`" 
+            return await sock.sendMessage(jid, {
+                text: "❓ *Usage:* `.lyrics <song name>`\n\n*Examples:*\n• `.lyrics Blinding Lights`\n• `.lyrics Perfect Ed Sheeran`"
             });
         }
 
@@ -28,7 +30,7 @@ module.exports = {
             const { lyrics, title, artist, album } = lyricsData;
             const truncated = lyrics.length > 4000 ? lyrics.substring(0, 4000) + "...\n\n_Lyrics too long..._" : lyrics;
 
-            const caption = 
+            const caption =
                 `🎵 *SONG LYRICS*\n━━━━━━━━━━━━━━━━━━━\n` +
                 `🎼 *Title:* ${title}\n` +
                 `👤 *Artist:* ${artist}\n` +
@@ -45,4 +47,3 @@ module.exports = {
         }
     }
 };
-
