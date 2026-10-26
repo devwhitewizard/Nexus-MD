@@ -243,9 +243,10 @@ module.exports = {
     description: "List all commands in stylized tree layout",
     category: "general",
     noAutoDelete: true,
-
+    // devSafety keeps huge menus deliverable ("waiting for this message" fix)
     execute: async (ctx) => {
         const { sock, jid, args, commands } = ctx;
+        const { clipText } = require("../../lib/devSafety");
         const pushName = ctx.pushName || ctx.msg?.pushName || ctx.msg?.key?.participant?.split("@")[0] || "User";
 
         // 🕰️ Date & Time
@@ -327,7 +328,7 @@ module.exports = {
                     txt += formatCategoryCommands(cmds) + "\n";
                     txt += `└─────────────────────────────\n\n`;
                     txt += `💡 _Tip: Type \`.menu <command>\` (e.g. \`.menu ping\`) for details._`;
-                    return await sendButtonMessage(sock, jid, txt, botName, channelButtons, banner, ctx.msg);
+                    return await sendButtonMessage(sock, jid, clipText(txt), botName, channelButtons, banner, ctx.msg);
                 }
 
                 // ② Match a specific command or alias
@@ -419,7 +420,9 @@ module.exports = {
                 body += `▸ Switch layout: *.menustyle 1*`;
             }
 
-            return await sendButtonMessage(sock, jid, body.trim(), botName, channelButtons, banner, ctx.msg);
+            // Clip before send — the full-tree style with 400+ commands far
+            // exceeds WhatsApp's safe rendering size ("waiting" fix).
+            return await sendButtonMessage(sock, jid, clipText(body.trim()), botName, channelButtons, banner, ctx.msg);
 
         } catch (e) {
             console.error("❌ Menu error:", e);

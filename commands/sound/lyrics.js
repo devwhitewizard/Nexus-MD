@@ -1,7 +1,5 @@
 const mediaApi = require("../../lib/mediaApi");
-
-// Moved from commands/media/lyrics.js — same implementation, now in the
-// SOUND category (still powered by lib/mediaApi.getLyrics).
+const { clipText, safeText } = require("../../lib/devSafety");
 module.exports = {
     name: "lyrics",
     aliases: ["lyric", "songlyrics"],
@@ -27,15 +25,16 @@ module.exports = {
                 return await sock.sendMessage(jid, { text: `❌ Could not find lyrics for: *${query}*` });
             }
 
-            const { lyrics, title, artist, album } = lyricsData;
-            const truncated = lyrics.length > 4000 ? lyrics.substring(0, 4000) + "...\n\n_Lyrics too long..._" : lyrics;
+            // Lyrics are API text — strip control chars and keep the reply
+            // well under WhatsApp's safe size ("waiting" fix).
+            const shown = clipText(safeText(lyrics), 3300);
 
             const caption =
                 `🎵 *SONG LYRICS*\n━━━━━━━━━━━━━━━━━━━\n` +
-                `🎼 *Title:* ${title}\n` +
-                `👤 *Artist:* ${artist}\n` +
-                (album ? `💿 *Album:* ${album}\n\n` : `\n`) +
-                `${truncated}\n\n` +
+                `🎼 *Title:* ${safeText(title)}\n` +
+                `👤 *Artist:* ${safeText(artist)}\n` +
+                (album ? `💿 *Album:* ${safeText(album)}\n\n` : `\n`) +
+                `${shown}\n\n` +
                 `━━━━━━━━━━━━━━━━━━━\n` +
                 `_Nexus-1MD Media Hub_`;
 
