@@ -26,6 +26,7 @@ const CATEGORY_META = {
     admin: { icon: "⚙️", label: "ADMIN", desc: "Admin moderation controls" },
     system: { icon: "🛰️", label: "SYSTEM", desc: "Bot diagnostics & status" },
     textmaker: { icon: "✨", label: "TEXTMAKER", desc: "Stylized text & logo generators" },
+    webtools: { icon: "🌐", label: "WEBTOOLS", desc: "Web, URL, DNS, IP & network tools" },
     owner: { icon: "📦", label: "OWNER", desc: "Bot configuration & owner controls" }
 };
 
@@ -33,7 +34,7 @@ const CATEGORY_META = {
 const CATEGORY_ORDER = [
     "general", "download", "ai", "developer", "sound", "media", "sticker", "fun", "games",
     "social", "anime", "economy", "sports", "news", "religion", "dp",
-    "group", "admin", "system", "textmaker", "owner"
+    "group", "admin", "system", "textmaker", "webtools", "owner"
 ];
 
 // Usage parameter hints for commands
@@ -212,8 +213,20 @@ const USAGE_HINTS = {
     qr: "<text>",
     readqr: "",
     tts: "<text>",
-    shorten: "<link>",
-    ocr: "<image>",
+    // Webtools
+    urlinfo: "<url>",
+    headers: "<url>",
+    status: "[url | bot]",
+    ping: "[host | bot]",
+    dns: "<domain>",
+    ip: "<address>",
+    ipinfo: "<address>",
+    domain: "<domain>",
+    whois: "<domain>",
+    ssl: "<domain>",
+    port: "<host> <port>",
+    redirect: "<url>",
+    short: "<url>",    ocr: "<image>",
     menu: "[cat]",
 
     // Owner / Dev Tools
