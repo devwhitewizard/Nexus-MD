@@ -1,195 +1,212 @@
-const { exec } = require("child_process");
+/**
+ * .update — pulls the LATEST build of the WRAPPER REPO (nexus-v1md).
+ * Detects changes between the deployed copy and GitHub, and applies them.
+ *
+ * Privacy: NOTHING about commits (SHA/message/author) is ever shown to users —
+ * only version numbers and the number of pending updates.
+ *
+ * Important: after pulling code, `npm install` always runs, because the
+ * engine (nexus-md) is installed by the wrapper via its package.json pin.
+ */
+
+const { execFile } = require("child_process");
 const fs = require("fs");
 const path = require("path");
 const axios = require("axios");
 
 const UPSTREAM_REPO = "https://github.com/devwhitewizard/nexus-v1md.git";
 const UPSTREAM_RAW = "https://raw.githubusercontent.com/devwhitewizard/nexus-v1md/main";
-const UPSTREAM_TARBALL = "https://codeload.github.com/devwhitewizard/nexus-v1md/tar.gz/refs/heads/main";
 const UPSTREAM_BRANCH = "main";
+const rootDir = path.join(__dirname, "../..");
+
+// npm on Windows is npm.cmd — execFile needs the exact binary
+const NPM_BIN = process.platform === "win32" ? "npm.cmd" : "npm";
+
+/** execFile wrapped as a promise; resolves { ok, stdout, stderr } */
+function runCmd(bin, args, opts = {}) {
+    return new Promise((resolve) => {
+        execFile(
+            bin,
+            args,
+            { cwd: rootDir, windowsHide: true, maxBuffer: 10 * 1024 * 1024, ...opts },
+            (err, stdout, stderr) => resolve({ ok: !err, stdout: (stdout || "").trim(), stderr: (stderr || "").trim(), err })
+        );
+    });
+}
+
+/** Local wrapper version (package.json in the deployed repo). */
+function localVersion() {
+    try { return require("../../package.json").version || "unknown"; }
+    catch (e) { return "unknown"; }
+}
 
 module.exports = {
     name: "update",
     aliases: ["up", "upgrade"],
-    description: "Update the bot to the latest version from GitHub.",
+    description: "Check / apply the latest bot update from GitHub.",
     category: "owner",
     isOwnerOnly: true,
     execute: async ({ sock, jid, msg, args }) => {
-
-        const isHeroku = !!process.env.DYNO || !!process.env.HEROKU_APP_NAME || !!process.env.HEROKU_API_KEY;
         const subCommand = args[0] ? args[0].toLowerCase() : "";
 
-        // If user typed ".update" or ".update check"
         if (!subCommand || subCommand === "check") {
-            await sock.sendMessage(jid, { text: "🔍 *Checking for updates on GitHub...*" }, { quoted: msg });
-            
-            try {
-                // 1. Fetch remote package.json version from raw GitHub (No API rate-limit)
-                const pkgRes = await axios.get(`${UPSTREAM_RAW}/package.json`, { timeout: 10000 });
-                const remoteVersion = pkgRes.data?.version || "Unknown";
-                const localPkg = require("../../package.json");
-                const localVersion = localPkg.version || "1.0.0";
+            await sock.sendMessage(jid, { text: "🔍 *Checking GitHub for the latest bot build...*" }, { quoted: msg });
 
-                // 2. Fetch commit details via GitHub API (with fallback if rate-limited)
-                let commitInfo = "";
-                try {
-                    const commitRes = await axios.get("https://api.github.com/repos/devwhitewizard/nexus-v1md/commits/main", {
-                        headers: { "User-Agent": "Nexus-MD-Bot/1.0" },
-                        timeout: 5000
-                    });
-                    const sha = commitRes.data.sha ? commitRes.data.sha.substring(0, 7) : "";
-                    const commitMsg = commitRes.data.commit?.message?.split("\n")[0] || "";
-                    const author = commitRes.data.commit?.author?.name || "";
-                    const date = commitRes.data.commit?.author?.date ? new Date(commitRes.data.commit.author.date).toLocaleString() : "";
+            const ver = localVersion();
+            const hasGit = fs.existsSync(path.join(rootDir, ".git"));
 
-                    if (sha) {
-                        commitInfo += `\n📌 *Latest Commit Details:*\n`;
-                        commitInfo += `• *SHA:* \`${sha}\`\n`;
-                        commitInfo += `• *Message:* ${commitMsg}\n`;
-                        commitInfo += `• *Author:* ${author}\n`;
-                        commitInfo += `• *Date:* ${date}\n`;
+            // Preferred: git-based change detection (exact, no API rate limits)
+            if (hasGit) {
+                const head = await runCmd("git", ["rev-parse", "HEAD"]);
+                const remote = await runCmd("git", ["ls-remote", "origin", UPSTREAM_BRANCH]);
+                const remoteSha = remote.ok ? (remote.stdout.split(/\s+/)[0] || "") : "";
+
+                if (remote.ok && head.ok && remoteSha && remoteSha !== head.stdout) {
+                    const fetchRes = await runCmd("git", ["fetch", "origin", UPSTREAM_BRANCH]);
+                    let count = "";
+                    if (fetchRes.ok) {
+                        const cnt = await runCmd("git", ["rev-list", "--count", "HEAD..FETCH_HEAD"]);
+                        if (cnt.ok) count = cnt.stdout;
                     }
-                } catch (_) {
-                    // Fail silently if GitHub API rate limits commit endpoint
+
+                    const statusMsg =
+                        `🔄 *Nexus-MD Update Check*\n` +
+                        `━━━━━━━━━━━━━━━━━━━\n\n` +
+                        `📦 *Installed:* \`v${ver}\`\n` +
+                        `🌐 *GitHub:* up to date? ❌ No\n` +
+                        `⬆️ *Updates behind:* \`${count || "several"}\`\n\n` +
+                        `🚀 *Reply with:* \`.update now\` to apply the latest build.`;
+                    return await sock.sendMessage(jid, { text: statusMsg }, { quoted: msg });
                 }
 
-                let statusMsg = `🔄 *Nexus-MD Update Status*\n`;
-                statusMsg += `━━━━━━━━━━━━━━━━━━━\n\n`;
-                statusMsg += `📦 *Current Version:* \`v${localVersion}\`\n`;
-                statusMsg += `🌐 *Latest Version:* \`v${remoteVersion}\`\n`;
-                statusMsg += commitInfo;
-                statusMsg += `\n🚀 *To apply updates, reply with:* \`.update now\``;
-
-                return await sock.sendMessage(jid, { text: statusMsg }, { quoted: msg });
-            } catch (err) {
-                return await sock.sendMessage(jid, { 
-                    text: `❌ *Error checking updates:* ${err.message}\n\nYou can force update by typing \`.update now\`` 
-                }, { quoted: msg });
+                if (remote.ok && head.ok && remoteSha === head.stdout) {
+                    return await sock.sendMessage(
+                        jid,
+                        { text: `✅ *Bot is up to date* (\`v${ver}\`)\n\nYou are running the latest build from GitHub.` },
+                        { quoted: msg }
+                    );
+                }
+                // git failed → fall through to the version-only check
             }
-        }
 
-        // If subCommand is "now" or "force"
-        await sock.sendMessage(jid, { text: "🚀 *Starting update process... Please wait.*" }, { quoted: msg });
-
-        // 1. Heroku API Deployment (If app name and API key are configured)
-        if (isHeroku && process.env.HEROKU_APP_NAME && process.env.HEROKU_API_KEY) {
-            const appName = process.env.HEROKU_APP_NAME;
-            const apiKey = process.env.HEROKU_API_KEY;
-
+            // Fallback (no .git): compare deployed package.json version with GitHub
             try {
-                await axios.post(
-                    `https://api.heroku.com/apps/${appName}/builds`,
-                    {
-                        source_blob: {
-                            url: UPSTREAM_TARBALL,
-                            version: "Latest Update"
-                        }
-                    },
-                    {
-                        headers: {
-                            "Accept": "application/vnd.heroku+json; version=3",
-                            "Authorization": `Bearer ${apiKey}`,
-                            "Content-Type": "application/json"
-                        }
-                    }
+                const res = await axios.get(`${UPSTREAM_RAW}/package.json`, { timeout: 10000 });
+                const remoteVersion = res.data?.version || "unknown";
+                if (remoteVersion !== ver) {
+                    const statusMsg =
+                        `🔄 *Nexus-MD Update Check*\n` +
+                        `━━━━━━━━━━━━━━━━━━━\n\n` +
+                        `📦 *Installed:* \`v${ver}\`\n` +
+                        `🌐 *Latest on GitHub:* \`v${remoteVersion}\`\n\n` +
+                        `🚀 *Reply with:* \`.update now\` to update the bot.`;
+                    return await sock.sendMessage(jid, { text: statusMsg }, { quoted: msg });
+                }
+                return await sock.sendMessage(
+                    jid,
+                    { text: `✅ *Bot is up to date* (\`v${ver}\`)` },
+                    { quoted: msg }
                 );
-
-                return await sock.sendMessage(jid, { 
-                    text: "🚀 *Heroku build triggered successfully!* The bot is rebuilding and will restart automatically in 2-3 minutes." 
-                }, { quoted: msg });
             } catch (err) {
-                console.error("Heroku build trigger error:", err.message);
-                // Fall through to direct update
+                return await sock.sendMessage(
+                    jid,
+                    { text: "❌ Couldn't reach GitHub right now. Please try again later." },
+                    { quoted: msg }
+                );
             }
         }
 
-        // 2. Try Git Reset Mode (If .git exists)
-        const rootDir = path.join(__dirname, "../..");
+        // ── .update now / force ─────────────────────────────────────────────
+        await sock.sendMessage(jid, { text: "🚀 *Applying the latest update... please wait.*" }, { quoted: msg });
+
         const hasGit = fs.existsSync(path.join(rootDir, ".git"));
 
         if (hasGit) {
-            return exec(`git fetch origin ${UPSTREAM_BRANCH} && git reset --hard FETCH_HEAD`, async (err, stdout, stderr) => {
-                if (!err) {
-                    await sock.sendMessage(jid, { text: "✅ *Git update applied successfully!* Restarting bot..." }, { quoted: msg });
-                    setTimeout(() => process.exit(1), 2000);
-                    return;
-                }
-                // If git command failed, proceed to direct tarball extractor fallback
-                performDirectTarballUpdate();
-            });
-        }
-
-        // 3. CypherX / Panel / Non-Git Direct Tarball Update Fallback
-        async function performDirectTarballUpdate() {
-            try {
-                const tempTarPath = path.join(rootDir, "temp_update.tar.gz");
-                const tempExtractDir = path.join(rootDir, "temp_update_extract");
-
-                // Download Tarball
-                const response = await axios.get(UPSTREAM_TARBALL, { responseType: "arraybuffer", timeout: 45000 });
-                fs.writeFileSync(tempTarPath, response.data);
-
-                if (!fs.existsSync(tempExtractDir)) fs.mkdirSync(tempExtractDir, { recursive: true });
-
-                // Extract using system tar
-                exec(`tar -xzf "${tempTarPath}" -C "${tempExtractDir}"`, async (extractErr) => {
-                    if (extractErr) {
-                        if (fs.existsSync(tempTarPath)) fs.unlinkSync(tempTarPath);
-                        return await sock.sendMessage(jid, { 
-                            text: `❌ *Update extraction failed:* ${extractErr.message}\n\nPlease update manually or check server permissions.` 
-                        }, { quoted: msg });
-                    }
-
-                    try {
-                        // Find extracted inner directory (nexus-v1md-main)
-                        const files = fs.readdirSync(tempExtractDir);
-                        const extractedFolder = files.length > 0 ? path.join(tempExtractDir, files[0]) : tempExtractDir;
-
-                        // Protected paths that MUST NOT be overwritten or deleted
-                        const protectedPaths = ["session", ".env", "database/storage.json", "database/nexus.db", "node_modules"];
-
-                        const copyRecursive = (src, dest) => {
-                            const entries = fs.readdirSync(src, { withFileTypes: true });
-                            for (const entry of entries) {
-                                const srcPath = path.join(src, entry.name);
-                                const destPath = path.join(dest, entry.name);
-                                const relativePath = path.relative(rootDir, destPath).replace(/\\/g, "/");
-
-                                if (protectedPaths.some(p => relativePath === p || relativePath.startsWith(p + "/"))) {
-                                    continue; // Skip protected paths
-                                }
-
-                                if (entry.isDirectory()) {
-                                    if (!fs.existsSync(destPath)) fs.mkdirSync(destPath, { recursive: true });
-                                    copyRecursive(srcPath, destPath);
-                                } else {
-                                    fs.copyFileSync(srcPath, destPath);
-                                }
-                            }
-                        };
-
-                        copyRecursive(extractedFolder, rootDir);
-
-                        // Clean up temporary files safely
-                        if (fs.existsSync(tempTarPath)) fs.unlinkSync(tempTarPath);
-                        if (fs.existsSync(tempExtractDir)) fs.rmSync(tempExtractDir, { recursive: true, force: true });
-
-                        await sock.sendMessage(jid, { 
-                            text: "✅ *Update Successful!* Core bot files updated successfully. Restarting bot in 2 seconds..." 
-                        }, { quoted: msg });
-
-                        setTimeout(() => process.exit(1), 2000);
-                    } catch (copyErr) {
-                        console.error("Copy error:", copyErr);
-                        await sock.sendMessage(jid, { text: `❌ *File sync error:* ${copyErr.message}` }, { quoted: msg });
-                    }
-                });
-            } catch (dlErr) {
-                console.error("Download error:", dlErr);
-                await sock.sendMessage(jid, { text: `❌ *Failed to download update archive:* ${dlErr.message}` }, { quoted: msg });
+            const reset = await runCmd("git", ["fetch", "origin", UPSTREAM_BRANCH]);
+            if (!reset.ok) {
+                return await sock.sendMessage(
+                    jid,
+                    { text: "❌ Couldn't reach GitHub. Please try `.update now` again later." },
+                    { quoted: msg }
+                );
             }
+
+            const hard = await runCmd("git", ["reset", "--hard", "FETCH_HEAD"]);
+            if (!hard.ok) {
+                return await sock.sendMessage(
+                    jid,
+                    { text: "❌ File sync failed (server permissions?). Try again later." },
+                    { quoted: msg }
+                );
+            }
+
+            // Always reinstall dependencies — the wrapper pin decides which
+            // engine build is actually loaded.
+            await sock.sendMessage(jid, { text: "📦 *Syncing dependencies... this can take a minute.*" }, { quoted: msg });
+            const install = await runCmd(NPM_BIN, ["install", "--no-audit", "--no-fund", "--force"], { timeout: 600000 });
+            if (!install.ok) {
+                console.error("update npm install failed:", install.stderr.slice(0, 500));
+                return await sock.sendMessage(
+                    jid,
+                    { text: "❌ Dependency install failed — bot files were updated, but a full restart/deploy is needed." },
+                    { quoted: msg }
+                );
+            }
+
+            await sock.sendMessage(jid, { text: "✅ *Update applied!* Restarting the bot in 3 seconds..." }, { quoted: msg });
+            setTimeout(() => process.exit(1), 3000);
+            return;
         }
 
-        performDirectTarballUpdate();
+        // ── No .git (Heroku / CypherX panels): re-deploy via latest tarball ──
+        const UPSTREAM_TARBALL = "https://codeload.github.com/devwhitewizard/nexus-v1md/tar.gz/refs/heads/main";
+        try {
+            const tempTarPath = path.join(rootDir, "temp_update.tar.gz");
+            const tempExtractDir = path.join(rootDir, "temp_update_extract");
+
+            const response = await axios.get(UPSTREAM_TARBALL, { responseType: "arraybuffer", timeout: 45000 });
+            fs.writeFileSync(tempTarPath, response.data);
+            if (!fs.existsSync(tempExtractDir)) fs.mkdirSync(tempExtractDir, { recursive: true });
+
+            const tarBin = process.platform === "win32" ? "tar.exe" : "tar";
+            const extract = await runCmd(tarBin, ["-xzf", tempTarPath, "-C", tempExtractDir], { timeout: 120000 });
+            if (!extract.ok) {
+                if (fs.existsSync(tempTarPath)) fs.unlinkSync(tempTarPath);
+                return await sock.sendMessage(jid, { text: "❌ Update extraction failed. Please update manually via your hosting panel." }, { quoted: msg });
+            }
+
+            const files = fs.readdirSync(tempExtractDir);
+            const extractedFolder = files.length > 0 ? path.join(tempExtractDir, files[0]) : tempExtractDir;
+
+            const protectedPaths = ["session", ".env", "database/storage.json", "database/nexus.db", "node_modules"];
+            const copyRecursive = (src, dest) => {
+                const entries = fs.readdirSync(src, { withFileTypes: true });
+                for (const entry of entries) {
+                    const srcPath = path.join(src, entry.name);
+                    const destPath = path.join(dest, entry.name);
+                    const relativePath = path.relative(rootDir, destPath).replace(/\\/g, "/");
+                    if (protectedPaths.some(p => relativePath === p || relativePath.startsWith(p + "/"))) continue;
+                    if (entry.isDirectory()) {
+                        if (!fs.existsSync(destPath)) fs.mkdirSync(destPath, { recursive: true });
+                        copyRecursive(srcPath, destPath);
+                    } else {
+                        fs.copyFileSync(srcPath, destPath);
+                    }
+                }
+            };
+            copyRecursive(extractedFolder, rootDir);
+
+            if (fs.existsSync(tempTarPath)) fs.unlinkSync(tempTarPath);
+            if (fs.existsSync(tempExtractDir)) fs.rmSync(tempExtractDir, { recursive: true, force: true });
+
+            await sock.sendMessage(jid, { text: "📦 *Core files updated — syncing dependencies...*" }, { quoted: msg });
+            const install = await runCmd(NPM_BIN, ["install", "--no-audit", "--no-fund", "--force"], { timeout: 600000 });
+
+            await sock.sendMessage(jid, { text: "✅ *Update successful!* Restarting the bot in 3 seconds..." }, { quoted: msg });
+            setTimeout(() => process.exit(1), 3000);
+        } catch (err) {
+            console.error("tarball update failed:", err.message);
+            await sock.sendMessage(jid, { text: "❌ Couldn't download the update archive. Please try again later." }, { quoted: msg });
+        }
     }
 };

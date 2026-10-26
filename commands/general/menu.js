@@ -249,9 +249,10 @@ module.exports = {
         const { clipText } = require("../../lib/devSafety");
         const pushName = ctx.pushName || ctx.msg?.pushName || ctx.msg?.key?.participant?.split("@")[0] || "User";
 
-        // 🕰️ Date & Time
-        const date = new Date().toLocaleDateString("en-GB");
-        const time = new Date().toLocaleTimeString("en-GB", { hour12: false });
+        // 🕰️ Date & Time — use the configured timezone (server clock is often UTC)
+        const tz = getSettings().timezone || process.env.BOT_TIMEZONE || "Africa/Nairobi";
+        const date = new Date().toLocaleDateString("en-GB", { timeZone: tz });
+        const time = new Date().toLocaleTimeString("en-GB", { hour12: false, timeZone: tz });
         const hours = new Date().getHours();
         let greeting = "Good Night 🌙";
         if (hours < 12) greeting = "Good Morning 🌅";
@@ -262,6 +263,18 @@ module.exports = {
         const botName = settings.botName || "Nexus-MD";
         const menuStyle = settings.menuStyle || 1;
         const CHANNEL_URL = "https://whatsapp.com/channel/0029VbD62UY7UYU6cftzu02";
+
+        // Displayed bot version = the ENGINE's version (nexus-md package).
+        // Cache is cleared each call so an in-place update shows immediately.
+        let botVersion = "unknown";
+        for (const p of ["nexus-md/package.json", "../../package.json"]) {
+            try {
+                const req = require.resolve(p);
+                delete require.cache[req];
+                botVersion = require(req).version;
+                break;
+            } catch (e) { /* try next */ }
+        }
 
         try {
             // ── De-duplicate commands ──────────────────────────────────────────
@@ -376,6 +389,7 @@ module.exports = {
             let body = "";
             body += `┌───[ 💎 ${botName.toUpperCase()} ]\n`;
             body += `│ > User: ${pushName}\n`;
+            body += `│ > Version: v${botVersion}\n`;
             body += `│ > Greeting: ${greeting}\n`;
             body += `│ > Date: ${date}\n`;
             body += `│ > Time: ${time}\n`;
