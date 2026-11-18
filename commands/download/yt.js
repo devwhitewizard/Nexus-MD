@@ -27,8 +27,8 @@ module.exports = {
                 await sock.sendPresenceUpdate('recording', jid);
                 await sock.sendMessage(jid, { 
                     audio: audio.buffer,
-                    mimetype: "audio/mpeg",
-                    fileName: `${audio.title || "audio"}.mp3`,
+                    mimetype: audio.mimetype || "audio/mp4",
+                    fileName: `${audio.title || "audio"}.${audio.mimetype === "audio/webm" ? "webm" : "m4a"}`,
                     caption: `🎵 *YouTube Audio*\n\n✨ *Title:* ${audio.title || "Unknown"}\n📦 *Format:* MP3\n\n_Nexus-1MD • Media Delivery_`
                 }, { quoted: msg });
             } else if (audio.url) {
